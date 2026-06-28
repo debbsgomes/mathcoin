@@ -2,6 +2,18 @@ import { ref } from 'vue'
 
 const apiBase = import.meta.env.VITE_API_URL || 'http://127.0.0.1:3000'
 
+export class ApiError extends Error {
+  status: number
+  code: string
+
+  constructor(status: number, code: string, message: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
 export function useApi() {
   const loading = ref(false)
   const error = ref<string | null>(null)
@@ -30,18 +42,18 @@ export function useApi() {
 
         const body = await res.json()
         if (!res.ok) {
-          // Don't retry client errors (4xx) or auth failures
+          const code = body.error || 'unknown'
+          const message = body.message || code
           if (res.status >= 400 && res.status < 500) {
-            throw new Error(body.message || body.error || 'request failed')
+            throw new ApiError(res.status, code, message)
           }
-          throw new Error(body.message || body.error || 'server error')
+          throw new ApiError(res.status, code, message)
         }
         return body
       } catch (e: any) {
         lastError = e
-        // Only retry on network errors or 5xx
-        if (attempt < retries && (e.message === 'Failed to fetch' || String(e.message).includes('server error'))) {
-          const delay = Math.pow(2, attempt) * 200 // 200ms, 400ms
+        if (attempt < retries && (e.message === 'Failed to fetch' || (e instanceof ApiError && e.status >= 500))) {
+          const delay = Math.pow(2, attempt) * 200
           await new Promise(r => setTimeout(r, delay))
           continue
         }

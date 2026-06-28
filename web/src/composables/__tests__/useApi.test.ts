@@ -61,16 +61,23 @@ describe('useApi', () => {
     expect(opts.headers['Content-Type']).toBe('application/json')
   })
 
-  it('request throws on non-ok response', async () => {
+  it('request throws ApiError with code and status on non-ok response', async () => {
     fetchSpy.mockResolvedValue(mockResponse({
       ok: false,
-      status: 401,
-      json: () => Promise.resolve({ error: 'unauthenticated', message: 'bad token' }),
+      status: 422,
+      json: () => Promise.resolve({ error: 'incorrect_solution', message: 'incorrect solution' }),
     }))
 
     const api = useApi()
-    await expect(api.request('/api/me')).rejects.toThrow('bad token')
-    expect(api.error.value).toBe('bad token')
+    try {
+      await api.request('/api/mint', { method: 'POST', body: '{}' })
+      expect.fail('should have thrown')
+    } catch (e: any) {
+      expect(e.name).toBe('ApiError')
+      expect(e.code).toBe('incorrect_solution')
+      expect(e.status).toBe(422)
+      expect(e.message).toBe('incorrect solution')
+    }
   })
 
   it('request does NOT send Authorization when no token', async () => {

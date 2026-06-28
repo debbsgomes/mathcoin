@@ -27,7 +27,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { useApi } from '../composables/useApi'
+import { useApi, ApiError } from '../composables/useApi'
 
 const emit = defineEmits<{ minted: [] }>()
 
@@ -72,19 +72,28 @@ async function handleMint() {
     resultClass.value = 'success'
     emit('minted')
   } catch (e: any) {
-    const msg = e.message || ''
-    if (msg.includes('incorrect')) {
-      result.value = 'wrong'
-      resultMessage.value = 'Wrong answer!'
-      resultClass.value = 'fail'
-      error.value = ''
-    } else if (msg.includes('expired')) {
-      result.value = 'expired'
-      resultMessage.value = 'Challenge expired!'
-      resultClass.value = 'fail'
-      error.value = ''
+    // Match on structured error codes from the backend JSON envelope
+    if (e instanceof ApiError) {
+      if (e.code === 'incorrect_solution') {
+        result.value = 'wrong'
+        resultMessage.value = 'Wrong answer!'
+        resultClass.value = 'fail'
+        error.value = ''
+      } else if (e.code === 'challenge_expired') {
+        result.value = 'expired'
+        resultMessage.value = 'Challenge expired!'
+        resultClass.value = 'fail'
+        error.value = ''
+      } else if (e.code === 'challenge_already_resolved') {
+        result.value = 'expired'
+        resultMessage.value = 'Already claimed!'
+        resultClass.value = 'fail'
+        error.value = ''
+      } else {
+        error.value = e.message
+      }
     } else {
-      error.value = msg
+      error.value = e.message || 'Network error'
     }
   } finally {
     submitting.value = false

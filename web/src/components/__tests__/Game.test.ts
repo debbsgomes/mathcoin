@@ -11,6 +11,16 @@ vi.mock('../../composables/useApi', () => ({
     setToken: vi.fn(),
     clearToken: vi.fn(),
   }),
+  ApiError: class extends Error {
+    code: string
+    status: number
+    constructor(status: number, code: string, message: string) {
+      super(message)
+      this.name = 'ApiError'
+      this.code = code
+      this.status = status
+    }
+  },
 }))
 
 // Mock useAuth
@@ -24,6 +34,7 @@ vi.mock('../../composables/useAuth', () => ({
 
 import Game from '../../components/Game.vue'
 import Wallet from '../../components/Wallet.vue'
+import { ApiError } from '../../composables/useApi'
 
 describe('Game', () => {
   beforeEach(() => {
@@ -83,7 +94,7 @@ describe('Game', () => {
       reward: 20,
       expires_at: '2026-01-01T00:00:00Z',
     })
-    const err = new Error('incorrect solution')
+    const err = new ApiError(422, 'incorrect_solution', 'incorrect solution')
     mockRequest.mockRejectedValueOnce(err)
 
     const wrapper = mount(Game)
