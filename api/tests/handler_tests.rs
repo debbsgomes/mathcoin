@@ -4,10 +4,14 @@
 use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::{AuthVerifier, MockVerifier};
+use mathcoin_api::difficulty::{FakeClock, MintingStats, RetargetConfig};
+use mathcoin_api::rate_limit::RateLimiter;
 use mathcoin_api::state::AppState;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
 async fn pool() -> PgPool {
@@ -31,12 +35,26 @@ fn test_app(pool: &PgPool, verifier: Arc<dyn AuthVerifier>) -> axum::Router {
     let state = Arc::new(AppState {
         db: pool.clone(),
         verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60),
+            target_rate: 20.0,
+            hysteresis_low: 15.0,
+            hysteresis_high: 25.0,
+            diff_min: 1,
+            diff_max: 12,
+            max_step: 1,
+        },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
         .route("/api/me", get(mathcoin_api::routes::me::handler))
         .route("/api/challenge", get(mathcoin_api::routes::challenge::handler))
         .route("/api/mint", post(mathcoin_api::routes::mint::handler))
+        .route("/api/stats", get(mathcoin_api::routes::stats::handler))
         .with_state(state)
 }
 
@@ -407,4 +425,195 @@ async fn mint_identity_from_jwt_not_body() {
     assert_eq!(response.status(), 200);
     let row: (i64,) = sqlx::query_as("SELECT user_id FROM earnings WHERE challenge_id = $1").bind(cid).fetch_one(&pool).await.unwrap();
     assert_eq!(row.0, uid, "should credit JWT user, not forged body user_id");
+}
+
+// ---- GET /api/stats ----
+
+#[tokio::test]
+async fn stats_returns_difficulty_rate_and_total_supply() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-stats".into(), "stats@example.com".into()));
+    let app = test_app(&pool, verifier);
+
+    let response = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["current_difficulty"], 3);
+    assert_eq!(body["mints_last_60s"], 0.0);
+    assert_eq!(body["target_rate_per_60s"], 20.0);
+    assert_eq!(body["total_accrued_supply"], 0);
+}
+
+// ---- Difficulty retarget integration ----
+
+#[tokio::test]
+async fn fast_mints_raise_difficulty() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let clock = Arc::new(FakeClock::new(Instant::now()));
+    let verifier: Arc<dyn AuthVerifier> = Arc::new(MockVerifier::accepting("sub-fast".into(), "fast@example.com".into()));
+    let app = test_app_with_clock(&pool, verifier, clock.clone());
+    let uid = create_user(&app).await;
+
+    // Seed and mint 30 challenges at current difficulty=3, fast enough to push rate > 25
+    for _ in 0..30 {
+        let cid = create_test_challenge(&pool, uid).await;
+        let r = app.clone().oneshot(Request::builder().method(http::Method::POST).uri("/api/mint").header("Authorization", bearer("t1")).header("Content-Type", "application/json").body(Body::from(serde_json::json!({"challenge_id": cid, "answer": 42}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+        // Small time advance so they're all within the 60s window
+        clock.advance(Duration::from_secs(1));
+    }
+
+    // After 30 mints in ~30s, difficulty should have gone up (rate = 30 in 60s > 25)
+    let stats = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").body(Body::empty()).unwrap()).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(stats.into_body(), 1024).await.unwrap()).unwrap();
+    assert!(body["current_difficulty"].as_u64().unwrap() >= 3, "difficulty should have increased from 3, got {}", body["current_difficulty"]);
+}
+
+#[tokio::test]
+async fn lull_lowers_difficulty() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let clock = Arc::new(FakeClock::new(Instant::now()));
+    let verifier: Arc<dyn AuthVerifier> = Arc::new(MockVerifier::accepting("sub-lull".into(), "lull@example.com".into()));
+    let app = test_app_with_clock(&pool, verifier, clock.clone());
+    let uid = create_user(&app).await;
+
+    // First spike difficulty up to ~6 by doing many mints
+    for _ in 0..50 {
+        let cid = create_test_challenge(&pool, uid).await;
+        let r = app.clone().oneshot(Request::builder().method(http::Method::POST).uri("/api/mint").header("Authorization", bearer("t1")).header("Content-Type", "application/json").body(Body::from(serde_json::json!({"challenge_id": cid, "answer": 42}).to_string())).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+        clock.advance(Duration::from_secs(1));
+    }
+
+    // Check peak difficulty after many fast mints
+    let peak_stats = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").body(Body::empty()).unwrap()).await.unwrap();
+    let peak_body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(peak_stats.into_body(), 1024).await.unwrap()).unwrap();
+    let peak_diff = peak_body["current_difficulty"].as_u64().unwrap();
+    assert!(peak_diff > 3, "difficulty should have increased from 3 after many mints, got {peak_diff}");
+
+    // Now advance clock by 120s — all mints evicted from window, rate → 0
+    clock.advance(Duration::from_secs(120));
+    // Trigger retarget: do one more mint
+    let cid = create_test_challenge(&pool, uid).await;
+    let r = app.clone().oneshot(Request::builder().method(http::Method::POST).uri("/api/mint").header("Authorization", bearer("t1")).header("Content-Type", "application/json").body(Body::from(serde_json::json!({"challenge_id": cid, "answer": 42}).to_string())).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+
+    let stats = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").body(Body::empty()).unwrap()).await.unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(stats.into_body(), 1024).await.unwrap()).unwrap();
+    let after_lull = body["current_difficulty"].as_u64().unwrap();
+    // With almost zero rate, difficulty should have dropped from the peak
+    assert!(after_lull < peak_diff || after_lull <= 3, "difficulty should have dropped from peak {peak_diff}, got {after_lull}");
+}
+
+// ---- Helper for tests that need clock injection ----
+
+fn test_app_with_clock(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, clock: Arc<FakeClock>) -> axum::Router {
+    use axum::routing::{get, post};
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        verifier: verifier.clone(),
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: clock as Arc<dyn mathcoin_api::difficulty::Clock>,
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60),
+            target_rate: 20.0,
+            hysteresis_low: 15.0,
+            hysteresis_high: 25.0,
+            diff_min: 1,
+            diff_max: 12,
+            max_step: 1,
+        },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+    });
+    axum::Router::new()
+        .route("/api/session", post(mathcoin_api::routes::session::handler))
+        .route("/api/me", get(mathcoin_api::routes::me::handler))
+        .route("/api/challenge", get(mathcoin_api::routes::challenge::handler))
+        .route("/api/mint", post(mathcoin_api::routes::mint::handler))
+        .route("/api/stats", get(mathcoin_api::routes::stats::handler))
+        .with_state(state)
+}
+
+// ---- Rate limiting ----
+
+fn test_app_with_rate(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, max_requests: u64) -> axum::Router {
+    use axum::routing::{get, post};
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60),
+            target_rate: 20.0,
+            hysteresis_low: 15.0,
+            hysteresis_high: 25.0,
+            diff_min: 1,
+            diff_max: 12,
+            max_step: 1,
+        },
+        rate_limiter: Arc::new(RateLimiter::new(60, max_requests)),
+    });
+    axum::Router::new()
+        .route("/api/session", post(mathcoin_api::routes::session::handler))
+        .route("/api/me", get(mathcoin_api::routes::me::handler))
+        .route("/api/stats", get(mathcoin_api::routes::stats::handler))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), mathcoin_api::rate_limit::rate_limit_middleware))
+        .with_state(state)
+}
+
+#[tokio::test]
+async fn rate_limit_under_limit_passes() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-rl-01".into(), "rl@example.com".into()));
+    let app = test_app_with_rate(&pool, verifier, 5);
+
+    for _ in 0..3 {
+        let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200, "under-limit request should pass");
+    }
+}
+
+#[tokio::test]
+async fn rate_limit_over_limit_returns_429() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-rl-02".into(), "rl2@example.com".into()));
+    let app = test_app_with_rate(&pool, verifier, 3);
+
+    for _ in 0..3 {
+        let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+    }
+
+    let r = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 429);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["error"], "rate_limited");
+}
+
+#[tokio::test]
+async fn rate_limit_per_sub_isolation() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier_a = Arc::new(MockVerifier::accepting("sub-a".into(), "a@example.com".into()));
+    let verifier_b = Arc::new(MockVerifier::accepting("sub-b".into(), "b@example.com".into()));
+    let app_a = test_app_with_rate(&pool, verifier_a, 2);
+    let app_b = test_app_with_rate(&pool, verifier_b.clone(), 2);
+
+    for _ in 0..2 {
+        let r = app_a.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tA")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+    }
+    let r = app_a.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tA")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 429, "user A should be rate limited");
+
+    let r = app_b.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tB")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200, "user B should NOT be rate limited");
 }

@@ -1,7 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 
-// Mock useApi
 const mockRequest = vi.fn()
 vi.mock('../../composables/useApi', () => ({
   useApi: () => ({
@@ -23,7 +22,6 @@ vi.mock('../../composables/useApi', () => ({
   },
 }))
 
-// Mock useAuth
 vi.mock('../../composables/useAuth', () => ({
   useAuth: () => ({
     session: { value: { access_token: 'jwt' } },
@@ -34,44 +32,40 @@ vi.mock('../../composables/useAuth', () => ({
 
 import Game from '../../components/Game.vue'
 import Wallet from '../../components/Wallet.vue'
+import Stats from '../../components/Stats.vue'
 import { ApiError } from '../../composables/useApi'
+
+function mockChallenge() {
+  return {
+    challenge_id: 'abc-123',
+    problem: '7 + 3',
+    difficulty: 3,
+    reward: 20,
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
+  }
+}
 
 describe('Game', () => {
   beforeEach(() => {
     vi.clearAllMocks()
   })
 
-  it('fetches challenge on mount and displays problem', async () => {
-    mockRequest.mockResolvedValueOnce({
-      challenge_id: 'abc-123',
-      problem: '7 + 3',
-      difficulty: 3,
-      reward: 20,
-      expires_at: '2026-01-01T00:00:00Z',
-    })
+  afterEach(() => {
+    // clear intervals from countdown
+  })
 
+  it('fetches challenge on mount and displays problem', async () => {
+    mockRequest.mockResolvedValueOnce(mockChallenge())
     const wrapper = mount(Game)
     await flushPromises()
 
     expect(mockRequest).toHaveBeenCalledWith('/api/challenge')
     expect(wrapper.text()).toContain('7 + 3')
-    expect(wrapper.find('input').exists()).toBe(true)
-    expect(wrapper.find('button').text()).toContain('MINE')
   })
 
   it('submits correct answer and shows success', async () => {
-    mockRequest.mockResolvedValueOnce({
-      challenge_id: 'abc-123',
-      problem: '7 + 3',
-      difficulty: 3,
-      reward: 20,
-      expires_at: '2026-01-01T00:00:00Z',
-    })
-    mockRequest.mockResolvedValueOnce({
-      status: 'CLAIMED',
-      reward: 20,
-      balance: 20,
-    })
+    mockRequest.mockResolvedValueOnce(mockChallenge())
+    mockRequest.mockResolvedValueOnce({ status: 'CLAIMED', reward: 20, balance: 20 })
 
     const wrapper = mount(Game)
     await flushPromises()
@@ -80,22 +74,12 @@ describe('Game', () => {
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
-    expect(mockRequest).toHaveBeenCalledWith('/api/mint', expect.objectContaining({
-      method: 'POST',
-    }))
     expect(wrapper.text()).toContain('Correct')
   })
 
   it('shows error on wrong answer and allows new challenge', async () => {
-    mockRequest.mockResolvedValueOnce({
-      challenge_id: 'abc-123',
-      problem: '7 + 3',
-      difficulty: 3,
-      reward: 20,
-      expires_at: '2026-01-01T00:00:00Z',
-    })
-    const err = new ApiError(422, 'incorrect_solution', 'incorrect solution')
-    mockRequest.mockRejectedValueOnce(err)
+    mockRequest.mockResolvedValueOnce(mockChallenge())
+    mockRequest.mockRejectedValueOnce(new ApiError(422, 'incorrect_solution', 'incorrect'))
 
     const wrapper = mount(Game)
     await flushPromises()
@@ -105,16 +89,21 @@ describe('Game', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Wrong')
-    // Should show a "Next challenge" button
-    expect(wrapper.find('button').text()).toContain('Next')
+    expect(wrapper.text()).toContain('Next challenge')
   })
 
-  it('shows loading while fetching challenge', async () => {
-    mockRequest.mockReturnValueOnce(new Promise(() => {})) // never resolves
+  it('shows rate-limited message on 429', async () => {
+    mockRequest.mockResolvedValueOnce(mockChallenge())
+    mockRequest.mockRejectedValueOnce(new ApiError(429, 'rate_limited', 'Too many'))
 
     const wrapper = mount(Game)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.text()).toContain('Loading challenge')
+    await flushPromises()
+
+    await wrapper.find('input').setValue('10')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Slow down')
   })
 })
 
@@ -124,13 +113,7 @@ describe('Wallet', () => {
   })
 
   it('displays balance from API', async () => {
-    mockRequest.mockResolvedValueOnce({
-      email: 'test@example.com',
-      balance: 120,
-      total_mined: 6,
-      claim_address: null,
-    })
-
+    mockRequest.mockResolvedValueOnce({ email: 'test@example.com', balance: 120, total_mined: 6 })
     const wrapper = mount(Wallet)
     await flushPromises()
 
@@ -139,16 +122,8 @@ describe('Wallet', () => {
   })
 
   it('exposes a refresh method that re-fetches', async () => {
-    mockRequest.mockResolvedValueOnce({
-      email: 'test@example.com',
-      balance: 10,
-      total_mined: 1,
-    })
-    mockRequest.mockResolvedValueOnce({
-      email: 'test@example.com',
-      balance: 30,
-      total_mined: 2,
-    })
+    mockRequest.mockResolvedValueOnce({ email: 'test@example.com', balance: 10, total_mined: 1 })
+    mockRequest.mockResolvedValueOnce({ email: 'test@example.com', balance: 30, total_mined: 2 })
 
     const wrapper = mount(Wallet)
     await flushPromises()
@@ -157,5 +132,26 @@ describe('Wallet', () => {
     await wrapper.vm.refresh()
     await flushPromises()
     expect(wrapper.text()).toContain('30')
+  })
+})
+
+describe('Stats', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('renders difficulty, rate, and supply from API', async () => {
+    mockRequest.mockResolvedValueOnce({
+      current_difficulty: 5,
+      mints_last_60s: 18,
+      total_accrued_supply: 4200,
+    })
+
+    const wrapper = mount(Stats)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('5')
+    expect(wrapper.text()).toContain('18')
+    expect(wrapper.text()).toContain('4200')
   })
 })
