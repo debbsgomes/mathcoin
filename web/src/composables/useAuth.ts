@@ -1,5 +1,5 @@
 import { ref, onUnmounted } from 'vue'
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createClient, type SupabaseClient, type Session, type User } from '@supabase/supabase-js'
 
 let _supabase: SupabaseClient | null = null
 
@@ -12,42 +12,47 @@ function getSupabase(): SupabaseClient {
   return _supabase
 }
 
+// Module-level shared init promise — all useAuth() instances share the same session restore
 let _initPromise: Promise<void> | null = null
+// Shared reactive state so multiple components observe the same session
+let _sharedSession: ReturnType<typeof ref<Session | null>> | null = null
+let _sharedUser: ReturnType<typeof ref<User | null>> | null = null
+let _sharedReady = ref(false)
+let _subscribed = false
 
 export function useAuth() {
   const supabase = getSupabase()
-  const session = ref<any>(null)
-  const user = ref<any>(null)
-  const ready = ref(false)
 
-  // Lazy-init: restore session from Supabase's local storage on first call
+  // Lazy-init shared state on first call
   if (!_initPromise) {
+    _sharedSession = ref<Session | null>(null)
+    _sharedUser = ref<User | null>(null)
+
     _initPromise = supabase.auth.getSession().then(({ data }) => {
-      session.value = data.session ?? null
-      user.value = data.session?.user ?? null
-      ready.value = true
-    })
-  } else {
-    _initPromise.then(() => {
-      ready.value = true
+      _sharedSession!.value = data.session ?? null
+      _sharedUser!.value = data.session?.user ?? null
+      _sharedReady.value = true
     })
   }
 
-  // Listen for auth state changes
-  const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
-    session.value = newSession
-    user.value = newSession?.user ?? null
-  })
-
-  onUnmounted(() => {
-    sub?.subscription?.unsubscribe()
-  })
+  // Listen for auth state changes (once, module-level)
+  if (!_subscribed) {
+    _subscribed = true
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, newSession) => {
+      _sharedSession!.value = newSession
+      _sharedUser!.value = newSession?.user ?? null
+      _sharedReady.value = true
+    })
+    onUnmounted(() => {
+      sub?.subscription?.unsubscribe()
+    })
+  }
 
   async function signInWithPassword(email: string, password: string) {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password })
     if (error) throw new Error(error.message)
-    session.value = data.session
-    user.value = data.session?.user ?? null
+    _sharedSession!.value = data.session
+    _sharedUser!.value = data.session?.user ?? null
   }
 
   async function signInWithGoogle() {
@@ -57,9 +62,16 @@ export function useAuth() {
 
   async function signOut() {
     await supabase.auth.signOut()
-    session.value = null
-    user.value = null
+    _sharedSession!.value = null
+    _sharedUser!.value = null
   }
 
-  return { session, user, ready, signInWithPassword, signInWithGoogle, signOut }
+  return {
+    session: _sharedSession!,
+    user: _sharedUser!,
+    ready: _sharedReady,
+    signInWithPassword,
+    signInWithGoogle,
+    signOut,
+  }
 }

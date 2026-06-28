@@ -268,7 +268,7 @@ fn der_to_pem(der: &[u8], label: &str) -> String {
     let mut pem = String::new();
     pem.push_str(&format!("-----BEGIN {}-----\n", label));
     for chunk in b64.as_bytes().chunks(64) {
-        pem.push_str(std::str::from_utf8(chunk).unwrap());
+        pem.push_str(std::str::from_utf8(chunk).expect("base64 output is always valid UTF-8"));
         pem.push('\n');
     }
     pem.push_str(&format!("-----END {}-----\n", label));

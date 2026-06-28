@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
+function mockResponse(overrides: Record<string, any> = {}) {
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: vi.fn().mockReturnValue('application/json') },
+    json: () => Promise.resolve({}),
+    ...overrides,
+  }
+}
+
 describe('useApi', () => {
   let store: Record<string, string>
   let fetchSpy: ReturnType<typeof vi.fn>
@@ -36,10 +46,9 @@ describe('useApi', () => {
   })
 
   it('request sends Authorization header when token is set', async () => {
-    fetchSpy.mockResolvedValue({
-      ok: true,
+    fetchSpy.mockResolvedValue(mockResponse({
       json: () => Promise.resolve({ email: 'deb@example.com', balance: 0 }),
-    } as any)
+    }))
 
     const api = useApi()
     api.setToken('jwt-token-123')
@@ -53,11 +62,11 @@ describe('useApi', () => {
   })
 
   it('request throws on non-ok response', async () => {
-    fetchSpy.mockResolvedValue({
+    fetchSpy.mockResolvedValue(mockResponse({
       ok: false,
       status: 401,
       json: () => Promise.resolve({ error: 'unauthenticated', message: 'bad token' }),
-    } as any)
+    }))
 
     const api = useApi()
     await expect(api.request('/api/me')).rejects.toThrow('bad token')
@@ -65,10 +74,7 @@ describe('useApi', () => {
   })
 
   it('request does NOT send Authorization when no token', async () => {
-    fetchSpy.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({}),
-    } as any)
+    fetchSpy.mockResolvedValue(mockResponse())
 
     const api = useApi()
     await api.request('/api/session', { method: 'POST' })

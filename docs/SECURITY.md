@@ -27,6 +27,7 @@
 | Multisig contract owner | Phase 6 (stretch) | Single key acceptable for portfolio. |
 | CSP headers on frontend | Production deploy | Handled by Vercel/Netlify when deployed. |
 | HSTS preload | Production deploy | Requires valid TLS cert on public domain. |
+| JWT stored in `localStorage` | If token ever gains value | Currently valueless game token. If MATH ever acquires monetary value, migrate JWT to `httpOnly` + `Secure` + `SameSite=Strict` cookie to prevent XSS-based token theft. |
 
 ## Secrets Management
 
