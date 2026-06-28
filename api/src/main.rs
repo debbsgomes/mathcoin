@@ -8,6 +8,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod chain;
 mod challenge;
 mod config;
 mod db;

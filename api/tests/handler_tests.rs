@@ -25,6 +25,8 @@ async fn pool() -> PgPool {
 }
 
 async fn clean_db(pool: &PgPool) {
+    sqlx::query("DELETE FROM distribution_entries").execute(pool).await.unwrap();
+    sqlx::query("DELETE FROM distributions").execute(pool).await.unwrap();
     sqlx::query("DELETE FROM earnings").execute(pool).await.unwrap();
     sqlx::query("DELETE FROM challenges").execute(pool).await.unwrap();
     sqlx::query("DELETE FROM users").execute(pool).await.unwrap();
@@ -701,4 +703,87 @@ async fn claim_address_duplicate_rejected() {
         .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
         .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"}"#)).unwrap()).await.unwrap();
     assert!(r.status().as_u16() >= 400, "duplicate claim_address should fail");
+}
+
+// ---- GET /api/claim-data ----
+
+fn test_app_with_claim_routes(pool: &PgPool, sub: &str) -> axum::Router {
+    use axum::routing::{get, post};
+    let verifier = Arc::new(MockVerifier::accepting(sub.into(), format!("{sub}@example.com")));
+    let state = Arc::new(AppState {
+        db: pool.clone(), verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig { window: Duration::from_secs(60), target_rate: 20.0, hysteresis_low: 15.0, hysteresis_high: 25.0, diff_min: 1, diff_max: 12, max_step: 1 },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+    });
+    axum::Router::new()
+        .route("/api/session", post(mathcoin_api::routes::session::handler))
+        .route("/api/claim-address", post(mathcoin_api::routes::claim_address::handler))
+        .route("/api/claim-data", get(mathcoin_api::routes::claim_data::handler))
+        .route("/api/me", get(mathcoin_api::routes::me::handler))
+        .with_state(state)
+}
+
+#[tokio::test]
+async fn claim_data_requires_published_distribution() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let app = test_app_with_claim_routes(&pool, "sub-cd");
+    let uid = create_user(&app).await;
+
+    // Set claim_address
+    app.clone().oneshot(Request::builder().method(http::Method::POST).uri("/api/claim-address")
+        .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
+        .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"}"#)).unwrap()).await.unwrap();
+
+    // Create a pending_publish distribution (not published)
+    let dist_id: (i64,) = sqlx::query_as("INSERT INTO distributions (merkle_root, total_amount, status) VALUES ('0xroot', 100, 'pending_publish') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    sqlx::query("INSERT INTO distribution_entries (distribution_id, wallet_address, cumulative_amount, proof) VALUES ($1, '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B', 100, '[]'::jsonb)")
+        .bind(dist_id.0).execute(&pool).await.unwrap();
+
+    // GET /api/claim-data must NOT see pending_publish
+    let req = Request::builder().method(http::Method::GET).uri("/api/claim-data")
+        .header("Authorization", bearer("t1")).body(Body::empty()).unwrap();
+    let r = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(r.status().as_u16(), 400);
+
+    sqlx::query("UPDATE distributions SET status = 'published' WHERE id = $1").bind(dist_id.0).execute(&pool).await.unwrap();
+
+    let req = Request::builder().method(http::Method::GET).uri("/api/claim-data")
+        .header("Authorization", bearer("t1")).body(Body::empty()).unwrap();
+    let r = app.oneshot(req).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["cumulative_amount"], 100);
+    assert_eq!(body["merkle_root"], "0xroot");
+}
+
+// ---- /api/me: published-only + claimed_onchain ----
+
+#[tokio::test]
+async fn me_includes_claimed_onchain_and_claimable() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let app = test_app_with_claim_routes(&pool, "sub-me2");
+    let uid = create_user(&app).await;
+
+    // Set claim_address and claimed_onchain
+    sqlx::query("UPDATE users SET claim_address = '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B', claimed_onchain = 50 WHERE id = $1")
+        .bind(uid).execute(&pool).await.unwrap();
+
+    // Create published distribution with cumulative 100
+    let dist_id: (i64,) = sqlx::query_as("INSERT INTO distributions (merkle_root, total_amount, status) VALUES ('0xroot', 100, 'published') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    sqlx::query("INSERT INTO distribution_entries (distribution_id, wallet_address, cumulative_amount, proof) VALUES ($1, '0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B', 100, '[]'::jsonb)")
+        .bind(dist_id.0).execute(&pool).await.unwrap();
+
+    let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/me")
+        .header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["claimed_onchain"], 50);
+    assert_eq!(body["claimable_onchain"], 50); // 100 - 50
 }
