@@ -1,0 +1,22 @@
+# Rust
+api/target/
+
+# Node
+web/node_modules/
+web/dist/
+
+# Environment files (secrets — use .env.example for templates)
+.env
+api/.env
+web/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

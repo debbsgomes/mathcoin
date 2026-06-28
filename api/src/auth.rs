@@ -122,12 +122,18 @@ impl JwksVerifier {
             .get(&self.jwks_url)
             .send()
             .await
-            .map_err(|e| AuthError::Unauthenticated(format!("JWKS fetch failed: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "JWKS fetch failed");
+                AuthError::Unauthenticated("authentication service unavailable".into())
+            })?;
 
         let jwks: JwksResponse = resp
             .json()
             .await
-            .map_err(|e| AuthError::Unauthenticated(format!("JWKS parse failed: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "JWKS parse failed");
+                AuthError::Unauthenticated("authentication service unavailable".into())
+            })?;
 
         {
             let mut cache = self.cache.write().await;
@@ -145,7 +151,7 @@ impl JwksVerifier {
         use serde_json::Value;
 
         let header = jsonwebtoken::decode_header(token)
-            .map_err(|e| AuthError::Unauthenticated(format!("malformed token: {e}")))?;
+            .map_err(|_| AuthError::Unauthenticated("malformed token".into()))?;
 
         let kid = header
             .kid
@@ -169,7 +175,10 @@ impl JwksVerifier {
         validation.set_audience(&[&self.audience]);
 
         let token_data = decode::<Value>(token, &decoding_key, &validation)
-            .map_err(|e| AuthError::Unauthenticated(format!("token verification failed: {e}")))?;
+            .map_err(|e| {
+                tracing::warn!(error = %e, "token verification failed");
+                AuthError::Unauthenticated("token verification failed".into())
+            })?;
 
         let claims = token_data.claims;
         let sub = claims["sub"]

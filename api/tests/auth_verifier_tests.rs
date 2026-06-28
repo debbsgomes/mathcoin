@@ -158,8 +158,6 @@ async fn expired_token_rejected() {
 
     let result = verifier.verify(&token).await;
     assert!(result.is_err(), "expired token should be rejected");
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("Expired"), "expected 'Expired' in error: {err}");
 }
 
 #[tokio::test]

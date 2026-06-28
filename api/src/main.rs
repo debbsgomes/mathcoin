@@ -1,6 +1,6 @@
 use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
-use tower_http::cors::{Any, CorsLayer};
+use tower_http::cors::CorsLayer;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
@@ -44,10 +44,13 @@ async fn main() {
         verifier: Arc::new(verifier),
     });
 
+    let frontend_origin = std::env::var("FRONTEND_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:5173".into());
+
     let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+        .allow_origin(frontend_origin.parse::<axum::http::HeaderValue>().unwrap())
+        .allow_methods([axum::http::Method::GET, axum::http::Method::POST])
+        .allow_headers([axum::http::header::CONTENT_TYPE, axum::http::header::AUTHORIZATION]);
 
     let app = Router::new()
         .route("/api/session", post(routes::session::handler))
