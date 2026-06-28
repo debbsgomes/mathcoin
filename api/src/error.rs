@@ -7,6 +7,8 @@ use serde::Serialize;
 pub enum AppError {
     #[error("unauthenticated: {0}")]
     Unauthenticated(String),
+    #[error("bad request: {0}")]
+    BadRequest(String),
     #[error("internal error")]
     Internal,
     #[error("challenge already resolved")]
@@ -17,6 +19,8 @@ pub enum AppError {
     IncorrectSolution,
     #[error("challenge expired")]
     ChallengeExpired,
+    #[error("rate limited")]
+    RateLimited,
 }
 
 #[derive(Serialize)]
@@ -30,6 +34,9 @@ impl IntoResponse for AppError {
         let (status, code, message) = match self {
             AppError::Unauthenticated(msg) => {
                 (StatusCode::UNAUTHORIZED, "unauthenticated", msg)
+            }
+            AppError::BadRequest(msg) => {
+                (StatusCode::BAD_REQUEST, "invalid_request", msg)
             }
             AppError::Internal => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -55,6 +62,11 @@ impl IntoResponse for AppError {
                 StatusCode::GONE,
                 "challenge_expired",
                 "challenge expired".to_string(),
+            ),
+            AppError::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "rate_limited",
+                "Too many requests. Please slow down.".to_string(),
             ),
         };
         let body = ErrorBody {

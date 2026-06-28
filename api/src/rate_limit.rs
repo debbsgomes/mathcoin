@@ -6,6 +6,8 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::Mutex;
 
+use crate::error::AppError;
+
 /// Simple in-memory rate limiter. Per-key sliding-window counters.
 /// Defaults: 60 requests per 60 seconds per key.
 pub struct RateLimiter {
@@ -63,11 +65,7 @@ pub async fn rate_limit_middleware(
         .unwrap_or_else(|| "anonymous".to_string());
 
     if !state.rate_limiter.check(key).await {
-        let body = axum::Json(serde_json::json!({
-            "error": "rate_limited",
-            "message": "Too many requests. Please slow down."
-        }));
-        return (axum::http::StatusCode::TOO_MANY_REQUESTS, body).into_response();
+        return AppError::RateLimited.into_response();
     }
 
     next.run(req).await
