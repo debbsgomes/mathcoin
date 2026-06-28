@@ -73,6 +73,7 @@ async fn main() {
         clock: clock.clone(),
         retarget_config: retarget_config.clone(),
         rate_limiter: rate_limiter.clone(),
+        onchain_config: config.onchain.clone(),
     });
 
     // Periodic retarget: every 5s, recompute difficulty from the sliding window
@@ -117,11 +118,12 @@ async fn main() {
         .layer(cors)
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
+    let bind_address = config.bind_address;
+    let listener = tokio::net::TcpListener::bind(&bind_address)
         .await
         .expect("failed to bind");
 
-    tracing::info!("mathcoin-api listening on http://127.0.0.1:3000");
+    tracing::info!("mathcoin-api listening on http://{bind_address}");
     axum::serve(listener, app).await.unwrap();
 }
 

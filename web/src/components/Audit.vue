@@ -1,12 +1,17 @@
 <template>
   <div class="audit card">
     <h3>Proof of Reserves</h3>
-    <p>Contract: <a :href="explorerLink" target="_blank">{{ contractAddress }}</a></p>
-    <p>Chain: {{ chain }}</p>
-    <p v-if="merkleRoot">Merkle Root: {{ merkleRoot }}</p>
-    <p>Total Supply: {{ totalSupply }} MATH</p>
-    <p>Distributions: {{ distCount }}</p>
-    <p v-if="lastPublished">Last published: {{ lastPublished }}</p>
+    <div v-if="!onchainEnabled">
+      <p class="muted">On-chain features are not enabled in this environment.</p>
+    </div>
+    <div v-else>
+      <p>Contract: <a :href="explorerLink" target="_blank">{{ contractAddress }}</a></p>
+      <p>Chain: {{ chain }}</p>
+      <p v-if="merkleRoot">Merkle Root: {{ merkleRoot }}</p>
+      <p>Total Supply: {{ totalSupply }} MATH</p>
+      <p>Distributions: {{ distCount }}</p>
+      <p v-if="lastPublished">Last published: {{ lastPublished }}</p>
+    </div>
   </div>
 </template>
 
@@ -15,6 +20,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useApi } from '../composables/useApi'
 
 const api = useApi()
+const onchainEnabled = ref(false)
 const contractAddress = ref('')
 const chain = ref('')
 const explorer = ref('')
@@ -28,13 +34,14 @@ const explorerLink = computed(() => `${explorer.value}/address/${contractAddress
 onMounted(async () => {
   try {
     const data = await api.request('/api/audit')
-    contractAddress.value = data.contract_address
-    chain.value = data.chain
-    explorer.value = data.explorer
-    merkleRoot.value = data.merkle_root
-    totalSupply.value = data.total_accrued_supply
-    distCount.value = data.distribution_count
-    lastPublished.value = data.last_published_at
+    onchainEnabled.value = data.onchain_enabled ?? false
+    contractAddress.value = data.contract_address ?? ''
+    chain.value = data.chain ?? ''
+    explorer.value = data.explorer ?? ''
+    merkleRoot.value = data.merkle_root ?? null
+    totalSupply.value = data.total_accrued_supply ?? 0
+    distCount.value = data.distribution_count ?? 0
+    lastPublished.value = data.last_published_at ?? null
   } catch { /* audit is public; silent fail */ }
 })
 </script>

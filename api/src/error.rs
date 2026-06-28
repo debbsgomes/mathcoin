@@ -21,6 +21,8 @@ pub enum AppError {
     ChallengeExpired,
     #[error("rate limited")]
     RateLimited,
+    #[error("on-chain disabled")]
+    OnchainDisabled,
 }
 
 #[derive(Serialize)]
@@ -67,6 +69,11 @@ impl IntoResponse for AppError {
                 StatusCode::TOO_MANY_REQUESTS,
                 "rate_limited",
                 "Too many requests. Please slow down.".to_string(),
+            ),
+            AppError::OnchainDisabled => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "onchain_disabled",
+                "On-chain features are not enabled in this environment. Set CONTRACT_ADDRESS to enable.".to_string(),
             ),
         };
         let body = ErrorBody {

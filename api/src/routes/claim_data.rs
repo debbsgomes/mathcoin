@@ -20,13 +20,15 @@ pub async fn handler(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<ClaimDataResponse>, AppError> {
+    let oc = state.onchain_config.as_ref()
+        .ok_or(AppError::OnchainDisabled)?;
+
     let token = extract_bearer_token(&headers)?;
     let claims = state.verifier.verify(token).await.map_err(|e| match e {
         AuthError::Unauthenticated(msg) => AppError::Unauthenticated(msg),
         AuthError::Internal => AppError::Internal,
     })?;
 
-    // Get user's claim_address
     let row: (Option<String>,) = sqlx::query_as(
         "SELECT claim_address FROM users WHERE provider_sub = $1",
     )
@@ -40,7 +42,6 @@ pub async fn handler(
         AppError::BadRequest("no claim address set".into())
     })?;
 
-    // Published-only: join distributions and filter status='published'
     let entry: Option<(i64, String, serde_json::Value)> = sqlx::query_as(
         "SELECT de.cumulative_amount, d.merkle_root, de.proof
          FROM distribution_entries de
@@ -58,8 +59,7 @@ pub async fn handler(
             "no distribution yet — available after the next sync".into(),
         )),
         Some((cumulative, root, proof)) => Ok(Json(ClaimDataResponse {
-            contract_address: std::env::var("CONTRACT_ADDRESS")
-                .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into()),
+            contract_address: oc.contract_address.clone(),
             account: claim_address,
             cumulative_amount: cumulative,
             merkle_root: root,

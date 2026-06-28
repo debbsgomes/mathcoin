@@ -7,9 +7,10 @@ use crate::state::AppState;
 
 #[derive(Serialize)]
 pub struct AuditResponse {
-    pub contract_address: String,
-    pub chain: String,
-    pub explorer: String,
+    pub onchain_enabled: bool,
+    pub contract_address: Option<String>,
+    pub chain: Option<String>,
+    pub explorer: Option<String>,
     pub merkle_root: Option<String>,
     pub total_accrued_supply: i64,
     pub distribution_count: i64,
@@ -19,12 +20,15 @@ pub struct AuditResponse {
 pub async fn handler(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AuditResponse>, AppError> {
-    let contract_address = std::env::var("CONTRACT_ADDRESS")
-        .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into());
-
-    let chain = std::env::var("CHAIN_NAME").unwrap_or_else(|_| "base_sepolia".into());
-    let explorer = std::env::var("EXPLORER_URL")
-        .unwrap_or_else(|_| "https://sepolia.basescan.org".into());
+    let (onchain_enabled, contract_address, chain, explorer) = match &state.onchain_config {
+        Some(cfg) => (
+            true,
+            Some(cfg.contract_address.clone()),
+            Some(cfg.chain_name.clone()),
+            Some(cfg.explorer_url.clone()),
+        ),
+        None => (false, None, None, None),
+    };
 
     let latest: Option<(String, String)> = sqlx::query_as(
         "SELECT merkle_root, created_at::text FROM distributions
@@ -55,6 +59,7 @@ pub async fn handler(
     };
 
     Ok(Json(AuditResponse {
+        onchain_enabled,
         contract_address,
         chain,
         explorer,

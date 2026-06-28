@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub jwt_iss: String,
     pub jwt_aud: String,
     pub frontend_origin: String,
+    pub bind_address: String,
     pub rate_limit_window: Duration,
     pub rate_limit_max: u64,
     pub retarget_window: Duration,
@@ -20,6 +21,19 @@ pub struct AppConfig {
     pub retarget_diff_min: u32,
     pub retarget_diff_max: u32,
     pub retarget_max_step: u32,
+    pub onchain: Option<OnchainConfig>,
+}
+
+/// On-chain configuration. Only present if CONTRACT_ADDRESS is set.
+/// When absent, all on-chain routes return "on-chain disabled" responses.
+#[derive(Debug, Clone)]
+pub struct OnchainConfig {
+    pub contract_address: String,
+    pub chain_name: String,
+    pub chain_id: u64,
+    pub explorer_url: String,
+    pub rpc_url: Option<String>,
+    pub relayer_private_key: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +65,35 @@ impl AppConfig {
         let frontend_origin =
             std::env::var("FRONTEND_ORIGIN").unwrap_or_else(|_| "http://localhost:5173".into());
 
+        let bind_address = std::env::var("BIND_ADDRESS")
+            .unwrap_or_else(|_| {
+                std::env::var("PORT")
+                    .map(|p| format!("0.0.0.0:{p}"))
+                    .unwrap_or_else(|_| "127.0.0.1:3000".into())
+            });
+
+        let onchain = std::env::var("CONTRACT_ADDRESS").ok().map(|contract_address| {
+            OnchainConfig {
+                contract_address,
+                chain_name: std::env::var("CHAIN_NAME")
+                    .unwrap_or_else(|_| "base_sepolia".into()),
+                chain_id: std::env::var("CHAIN_ID")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(84532),
+                explorer_url: std::env::var("EXPLORER_URL")
+                    .unwrap_or_else(|_| "https://sepolia.basescan.org".into()),
+                rpc_url: std::env::var("BASE_RPC_URL").ok(),
+                relayer_private_key: std::env::var("RELAYER_PRIVATE_KEY").ok(),
+            }
+        });
+
+        if onchain.is_some() {
+            tracing::info!("on-chain layer enabled");
+        } else {
+            tracing::info!("CONTRACT_ADDRESS not set — on-chain layer disabled");
+        }
+
         Self {
             database_url,
             jwks_url,
@@ -59,6 +102,7 @@ impl AppConfig {
             jwt_iss,
             jwt_aud,
             frontend_origin,
+            bind_address,
             rate_limit_window: Duration::from_secs(60),
             rate_limit_max: 60,
             retarget_window: Duration::from_secs(60),
@@ -68,6 +112,7 @@ impl AppConfig {
             retarget_diff_min: 1,
             retarget_diff_max: 12,
             retarget_max_step: 1,
+            onchain,
         }
     }
 }

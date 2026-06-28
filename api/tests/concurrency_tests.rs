@@ -53,6 +53,7 @@ fn test_app(pool: &PgPool, sub: &str) -> axum::Router {
             max_step: 1,
         },
         rate_limiter: Arc::new(RateLimiter::new(60, 10000)),
+        onchain_config: None,
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))

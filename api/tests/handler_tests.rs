@@ -4,6 +4,7 @@
 use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::{AuthVerifier, MockVerifier};
+use mathcoin_api::config::OnchainConfig;
 use mathcoin_api::difficulty::{FakeClock, MintingStats, RetargetConfig};
 use mathcoin_api::rate_limit::RateLimiter;
 use mathcoin_api::state::AppState;
@@ -50,6 +51,7 @@ fn test_app(pool: &PgPool, verifier: Arc<dyn AuthVerifier>) -> axum::Router {
             max_step: 1,
         },
         rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+        onchain_config: None,
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -530,6 +532,7 @@ fn test_app_with_clock(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, clock: Ar
             max_step: 1,
         },
         rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+        onchain_config: None,
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -560,6 +563,7 @@ fn test_app_with_rate(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, max_reques
             max_step: 1,
         },
         rate_limiter: Arc::new(RateLimiter::new(60, max_requests)),
+        onchain_config: None,
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -637,6 +641,7 @@ fn test_app_with_claim_sub(pool: &PgPool, sub: &str) -> axum::Router {
             diff_min: 1, diff_max: 12, max_step: 1,
         },
         rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+        onchain_config: None,
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -717,6 +722,14 @@ fn test_app_with_claim_routes(pool: &PgPool, sub: &str) -> axum::Router {
         clock: Arc::new(FakeClock::new(Instant::now())),
         retarget_config: RetargetConfig { window: Duration::from_secs(60), target_rate: 20.0, hysteresis_low: 15.0, hysteresis_high: 25.0, diff_min: 1, diff_max: 12, max_step: 1 },
         rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+        onchain_config: Some(OnchainConfig {
+            contract_address: "0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B".into(),
+            chain_name: "base_sepolia".into(),
+            chain_id: 84532,
+            explorer_url: "https://sepolia.basescan.org".into(),
+            rpc_url: None,
+            relayer_private_key: None,
+        }),
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
