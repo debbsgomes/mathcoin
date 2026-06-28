@@ -7,10 +7,13 @@
 use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::MockVerifier;
+use mathcoin_api::difficulty::{FakeClock, MintingStats, RetargetConfig};
 use mathcoin_api::state::AppState;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::sync::Barrier;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -36,6 +39,18 @@ fn test_app(pool: &PgPool, sub: &str) -> axum::Router {
     let state = Arc::new(AppState {
         db: pool.clone(),
         verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60),
+            target_rate: 20.0,
+            hysteresis_low: 15.0,
+            hysteresis_high: 25.0,
+            diff_min: 1,
+            diff_max: 12,
+            max_step: 1,
+        },
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))

@@ -4,14 +4,12 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::challenge::generate_challenge;
+use std::sync::atomic::Ordering;
 
 use crate::auth::AuthError;
 use crate::error::AppError;
 use crate::routes::session::extract_bearer_token;
 use crate::state::AppState;
-
-/// Fixed difficulty constant for Phase 2. Replaced by retarget controller in Phase 4.
-const PHASE2_DIFFICULTY: u32 = 3;
 
 #[derive(Serialize)]
 pub struct ChallengeResponse {
@@ -44,12 +42,14 @@ pub async fn handler(
         .ok_or_else(|| AppError::Unauthenticated("user not found".into()))?;
 
     // Generate challenge at fixed difficulty
+    let difficulty = state.difficulty.load(Ordering::Relaxed);
+
     let ttl_seconds = 60;
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds);
 
     let (problem, solution, reward) = {
         let mut rng = rand::thread_rng();
-        generate_challenge(PHASE2_DIFFICULTY, &mut rng)
+        generate_challenge(difficulty, &mut rng)
     };
 
     let challenge_id = Uuid::new_v4();
@@ -62,7 +62,7 @@ pub async fn handler(
     .bind(user_id.0)
     .bind(&problem)
     .bind(solution)
-    .bind(PHASE2_DIFFICULTY as i16)
+    .bind(difficulty as i16)
     .bind(reward)
     .bind(expires_at)
     .execute(&state.db)
@@ -75,7 +75,7 @@ pub async fn handler(
     Ok(Json(ChallengeResponse {
         challenge_id,
         problem,
-        difficulty: PHASE2_DIFFICULTY,
+        difficulty,
         reward,
         expires_at: expires_at.to_rfc3339(),
     }))

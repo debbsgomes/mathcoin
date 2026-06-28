@@ -10,12 +10,16 @@ use tracing_subscriber::EnvFilter;
 mod auth;
 mod challenge;
 mod db;
+mod difficulty;
 mod error;
 mod routes;
 mod state;
 
 use auth::JwksVerifier;
+use difficulty::{RealClock, RetargetConfig, MintingStats};
 use state::AppState;
+use std::sync::atomic::AtomicU32;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() {
@@ -44,9 +48,42 @@ async fn main() {
 
     let verifier = JwksVerifier::new(jwks_url, jwt_iss, jwt_aud);
 
+    let retarget_config = RetargetConfig {
+        window: Duration::from_secs(60),
+        target_rate: 20.0,
+        hysteresis_low: 15.0,
+        hysteresis_high: 25.0,
+        diff_min: 1,
+        diff_max: 12,
+        max_step: 1,
+    };
+
+    let difficulty = Arc::new(AtomicU32::new(3));
+    let mint_stats = Arc::new(tokio::sync::Mutex::new(MintingStats::new()));
+    let clock: Arc<dyn difficulty::Clock> = Arc::new(RealClock);
+
     let state = Arc::new(AppState {
         db: pool,
         verifier: Arc::new(verifier),
+        difficulty: difficulty.clone(),
+        mint_stats: mint_stats.clone(),
+        clock: clock.clone(),
+        retarget_config: retarget_config.clone(),
+    });
+
+    // Periodic retarget: every 5s, recompute difficulty from the sliding window
+    let retarget_state = state.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let current = retarget_state.difficulty.load(std::sync::atomic::Ordering::Relaxed);
+            let mut stats = retarget_state.mint_stats.lock().await;
+            let now = retarget_state.clock.now();
+            let rate = stats.rate(retarget_state.retarget_config.window, now);
+            let new_diff = difficulty::difficulty_retarget(current, rate, &retarget_state.retarget_config);
+            retarget_state.difficulty.store(new_diff, std::sync::atomic::Ordering::Relaxed);
+        }
     });
 
     let frontend_origin = std::env::var("FRONTEND_ORIGIN")
@@ -64,6 +101,7 @@ async fn main() {
         .route("/api/me", get(routes::me::handler))
         .route("/api/challenge", get(routes::challenge::handler))
         .route("/api/mint", post(routes::mint::handler))
+        .route("/api/stats", get(routes::stats::handler))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(cors)

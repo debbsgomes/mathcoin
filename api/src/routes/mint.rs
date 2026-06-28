@@ -178,6 +178,20 @@ pub async fn handler(
         (Some(0),)
     });
 
+    // Step 7: record mint for difficulty retarget
+    {
+        let now = state.clock.now();
+        let mut stats = state.mint_stats.lock().await;
+        stats.record(now);
+        let rate = stats.rate(state.retarget_config.window, now);
+        let new_diff = crate::difficulty::difficulty_retarget(
+            state.difficulty.load(std::sync::atomic::Ordering::Relaxed),
+            rate,
+            &state.retarget_config,
+        );
+        state.difficulty.store(new_diff, std::sync::atomic::Ordering::Relaxed);
+    }
+
     Ok(Json(MintResponse {
         status: "CLAIMED".into(),
         reward,
