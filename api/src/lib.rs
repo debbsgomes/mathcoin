@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod chain;
 pub mod challenge;
 pub mod config;
 pub mod db;

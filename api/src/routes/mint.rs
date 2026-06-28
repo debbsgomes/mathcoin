@@ -49,16 +49,17 @@ pub async fn handler(
         "mint",
         challenge_id = %body.challenge_id,
         user_id = user_id.0,
-        answer = body.answer,
     );
     let _guard = span.enter();
 
     // Step 1: check challenge state and expiry in one query
+    // Verifies the challenge belongs to the authenticated user (record ownership).
     let row: Option<(String, i64, i64, bool)> = match sqlx::query_as(
         "SELECT status, solution, reward, expires_at <= now()
-         FROM challenges WHERE id = $1",
+         FROM challenges WHERE id = $1 AND user_id = $2",
     )
     .bind(body.challenge_id)
+    .bind(user_id.0)
     .fetch_optional(&state.db)
     .await
     {

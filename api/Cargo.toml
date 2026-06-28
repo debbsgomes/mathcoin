@@ -21,6 +21,8 @@ dotenvy = "0.15"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 rand = "0.8"
+alloy-primitives = "0.8"
+tokio-stream = "0.1"
 
 [dev-dependencies]
 p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }

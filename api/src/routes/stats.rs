@@ -30,7 +30,7 @@ pub async fn handler(
     )
     .fetch_one(&state.db)
     .await
-    .unwrap_or((Some(0),));
+    .map_err(|_| AppError::Internal)?;
 
     Ok(Json(StatsResponse {
         current_difficulty,

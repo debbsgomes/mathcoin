@@ -8,6 +8,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod chain;
 mod challenge;
 mod config;
 mod db;
@@ -106,6 +107,10 @@ async fn main() {
         .route("/api/challenge", get(routes::challenge::handler))
         .route("/api/mint", post(routes::mint::handler))
         .route("/api/stats", get(routes::stats::handler))
+        .route("/api/audit", get(routes::audit::handler))
+        .route("/api/claim-address", post(routes::claim_address::handler))
+        .route("/api/claim-data", get(routes::claim_data::handler))
+        .route("/api/claim-relay", get(routes::claim_relay::handler))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit::rate_limit_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())

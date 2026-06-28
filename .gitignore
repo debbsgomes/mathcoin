@@ -4,6 +4,8 @@ api/target/
 # Node
 web/node_modules/
 web/dist/
+publisher/node_modules/
+publisher/dist/
 
 # Environment files (secrets — use .env.example for templates)
 .env

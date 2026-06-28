@@ -1,0 +1,30 @@
+{
+  "name": "publisher",
+  "version": "1.0.0",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@openzeppelin/merkle-tree": "^1.0.8",
+    "@types/pg": "^8.20.0",
+    "pg": "^8.22.0",
+    "viem": "^2.53.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  },
+  "overrides": {
+    "uuid": ">=11.1.1",
+    "ws": ">=8.20.2"
+  }
+}
