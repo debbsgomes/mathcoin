@@ -62,7 +62,7 @@ async fn concurrent_submissions_get_sequential_nonces() {
     for _ in 0..10 {
         let s = submitter.clone();
         handles.push(tokio::spawn(async move {
-            s.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0 }).await.unwrap()
+            s.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0, gas_limit: None, max_fee_per_gas: None, max_priority_fee_per_gas: None }).await.unwrap()
         }));
     }
     for h in handles {
@@ -89,7 +89,7 @@ async fn nonce_too_low_triggers_resync_and_retry() {
     let submitter = TxSubmitter::new(provider.clone(), "0xSender".into()).await.unwrap()
         .with_confirmation_timeout(Duration::from_secs(2));
 
-    let result = submitter.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0 }).await;
+    let result = submitter.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0, gas_limit: None, max_fee_per_gas: None, max_priority_fee_per_gas: None }).await;
     assert!(result.is_ok(), "should succeed after nonce resync: {result:?}");
 }
 
@@ -101,7 +101,7 @@ async fn receipt_timeout_triggers_gap_detection() {
     let submitter = TxSubmitter::new(provider.clone(), "0xSender".into()).await.unwrap()
         .with_confirmation_timeout(Duration::from_millis(100));
 
-    let result = submitter.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0 }).await;
+    let result = submitter.submit(Transaction { to: "0xDest".into(), data: vec![], value: 0, gas_limit: None, max_fee_per_gas: None, max_priority_fee_per_gas: None }).await;
     assert!(result.is_err());
 
     // Nonce was consumed locally but chain didn't confirm

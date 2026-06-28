@@ -62,22 +62,3 @@ export async function publish(pool: Pool): Promise<{ distributionId: number; roo
     client.release()
   }
 }
-
-// Run as standalone script
-if (require.main === module) {
-  const databaseUrl = process.env.DATABASE_URL || 'postgres://mathcoin:mathcoin@localhost:5432/mathcoin_dev'
-  const pool = new Pool({ connectionString: databaseUrl })
-
-  publish(pool)
-    .then((result) => {
-      console.log(`Published distribution #${result.distributionId}`)
-      console.log(`  root: ${result.root}`)
-      console.log(`  entries: ${result.entries}`)
-      process.exit(0)
-    })
-    .catch((err) => {
-      console.error('Publish failed:', err)
-      process.exit(1)
-    })
-    .finally(() => pool.end())
-}

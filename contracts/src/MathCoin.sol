@@ -3,10 +3,11 @@ pragma solidity 0.8.24;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Ownable2Step} from "@openzeppelin/contracts/access/Ownable2Step.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
 /// @title MathCoin — earned off-chain, claimed on-chain via a cumulative Merkle distributor.
-contract MathCoin is ERC20, Ownable {
+contract MathCoin is ERC20, Ownable2Step {
     bytes32 public merkleRoot;
     mapping(address => uint256) public claimed;
 

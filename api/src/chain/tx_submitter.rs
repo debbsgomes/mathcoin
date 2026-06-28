@@ -9,6 +9,9 @@ pub struct Transaction {
     pub to: String,
     pub data: Vec<u8>,
     pub value: u64,
+    pub gas_limit: Option<u64>,
+    pub max_fee_per_gas: Option<u64>,
+    pub max_priority_fee_per_gas: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -67,10 +70,15 @@ impl<P: TxProvider> TxSubmitter<P> {
         drop(_guard);
 
         let receipt = timeout(self.confirmation_timeout, async {
+            let mut delay_ms = 500u64;
             loop {
                 match self.provider.get_transaction_receipt(&tx_hash).await {
                     Ok(Some(receipt)) => return Ok(receipt),
-                    Ok(None) => { tokio::time::sleep(Duration::from_secs(1)).await; continue }
+                    Ok(None) => {
+                        tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                        delay_ms = (delay_ms * 2).min(8000);
+                        continue
+                    }
                     Err(e) => return Err(e),
                 }
             }

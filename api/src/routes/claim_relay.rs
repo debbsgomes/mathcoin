@@ -68,6 +68,9 @@ pub async fn handler(
             .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into()),
         data: data.into_bytes(),
         value: 0,
+        gas_limit: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
     };
 
     // Submit via the adapter's TxSubmitter

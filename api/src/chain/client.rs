@@ -18,6 +18,7 @@ pub trait ChainClient: Send + Sync {
     async fn get_balance(&self, address: &str) -> Result<u64, String>;
     async fn get_current_root(&self) -> Result<String, String>;
     async fn get_claim_events(&self, from_block: u64) -> Result<Vec<ClaimedEvent>, String>;
+    async fn get_latest_block(&self) -> Result<u64, String>;
 }
 
 /// Mock implementation that returns configurable data — no live RPC.
@@ -26,6 +27,7 @@ pub struct MockChainClient {
     pub balance: Mutex<std::collections::HashMap<String, u64>>,
     pub root: Mutex<String>,
     pub events: Mutex<Vec<ClaimedEvent>>,
+    pub latest_block: Mutex<u64>,
 }
 
 impl MockChainClient {
@@ -35,7 +37,12 @@ impl MockChainClient {
             balance: Mutex::new(std::collections::HashMap::new()),
             root: Mutex::new("0x0000000000000000000000000000000000000000000000000000000000000000".into()),
             events: Mutex::new(Vec::new()),
+            latest_block: Mutex::new(0),
         }
+    }
+
+    pub async fn set_latest_block(&self, block: u64) {
+        *self.latest_block.lock().await = block;
     }
 
     pub async fn set_claimed(&self, address: &str, amount: u64) {
@@ -72,5 +79,9 @@ impl ChainClient for MockChainClient {
     async fn get_claim_events(&self, from_block: u64) -> Result<Vec<ClaimedEvent>, String> {
         let events = self.events.lock().await.clone();
         Ok(events.into_iter().filter(|e| e.block_number >= from_block).collect())
+    }
+
+    async fn get_latest_block(&self) -> Result<u64, String> {
+        Ok(*self.latest_block.lock().await)
     }
 }

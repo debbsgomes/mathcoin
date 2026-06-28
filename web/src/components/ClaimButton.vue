@@ -31,7 +31,7 @@ async function claim() {
   state.value = 'submitting'
   error.value = ''
   try {
-    const data = await api.request('/api/claim', { method: 'POST' })
+    const data = await api.request('/api/claim-relay', { method: 'POST' })
     txHash.value = data.tx_hash
     state.value = 'submitted'
   } catch (e: any) {

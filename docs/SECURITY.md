@@ -20,12 +20,13 @@
 | Item | Target Phase | Rationale |
 |---|---|---|
 | Relayer private key in KMS | Phase 6 | No relayer yet. Key stored as env var in Phase 5. |
-| Multisig contract owner | Phase 6 (stretch) | Single key acceptable for portfolio. |
+| Multisig contract owner | Deploy | `Ownable2Step` implemented. Multisig (Safe) recommended for production. |
 | CSP headers on frontend | Production deploy | Handled by Vercel/Netlify when deployed. |
 | HSTS preload | Production deploy | Requires valid TLS cert on public domain. |
 | JWT stored in `localStorage` | If token ever gains value | Currently valueless game token. If MATH ever acquires monetary value, migrate JWT to `httpOnly` + `Secure` + `SameSite=Strict` cookie to prevent XSS-based token theft. |
 | Panic handler middleware | Production deploy | TraceLayer logs all requests. Handler panic → dropped connection (acceptable for portfolio). |
 | Install `cargo-audit` in CI | Phase 6 | Not installed locally. Should run periodically. |
+| Claim relay wiring (TxSubmitter in AppState) | Phase 6 | Route registered but returns placeholder tx_hash. |
 
 ## Secrets Management
 

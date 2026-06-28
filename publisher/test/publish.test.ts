@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterAll } from 'vitest'
+import { randomUUID } from 'node:crypto'
 import { Pool } from 'pg'
 import { publish } from '../src/publish'
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree'
@@ -38,7 +39,7 @@ describe('publisher', () => {
   }
 
   async function seedEarnings(userId: number, amount: number) {
-    const cid = crypto.randomUUID()
+    const cid = randomUUID()
     await pool.query(
       `INSERT INTO challenges (id, user_id, problem, solution, difficulty, reward, status, expires_at)
        VALUES ($1, $2, 'test', 0, 1, $3, 'CLAIMED', now() + INTERVAL '1 hour')`,

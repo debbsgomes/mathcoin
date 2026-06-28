@@ -68,6 +68,9 @@ async fn publish_next(pool: &PgPool, submitter: &TxSubmitter<MockTxProvider>) ->
         to: "0xContract".into(),
         data: root.as_bytes().to_vec(),
         value: 0,
+        gas_limit: None,
+        max_fee_per_gas: None,
+        max_priority_fee_per_gas: None,
     };
 
     let receipt = submitter.submit(tx).await?;
