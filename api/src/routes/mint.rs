@@ -38,16 +38,17 @@ pub async fn handler(
         .await
         .map_err(|_| AppError::Internal)?;
 
-    // Step 1: check challenge state
-    let row: Option<(String, i64, i64)> = sqlx::query_as(
-        "SELECT status, solution, reward FROM challenges WHERE id = $1",
+    // Step 1: check challenge state and expiry in one query
+    let row: Option<(String, i64, i64, bool)> = sqlx::query_as(
+        "SELECT status, solution, reward, expires_at <= now()
+         FROM challenges WHERE id = $1",
     )
     .bind(body.challenge_id)
     .fetch_optional(&state.db)
     .await
     .map_err(|_| AppError::Internal)?;
 
-    let (status, solution, reward) = match row {
+    let (status, solution, reward, expired) = match row {
         None => return Err(AppError::UnknownChallenge),
         Some(r) => r,
     };
@@ -56,16 +57,7 @@ pub async fn handler(
         return Err(AppError::AlreadyResolved);
     }
 
-    // Step 2: check expiry
-    let expired: (bool,) = sqlx::query_as(
-        "SELECT expires_at <= now() FROM challenges WHERE id = $1",
-    )
-    .bind(body.challenge_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|_| AppError::Internal)?;
-
-    if expired.0 {
+    if expired {
         sqlx::query(
             "UPDATE challenges SET status = 'EXPIRED', resolved_at = now()
              WHERE id = $1 AND status = 'PENDING'",
