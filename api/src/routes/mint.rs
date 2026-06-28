@@ -34,9 +34,10 @@ pub async fn handler(
 
     let user_id: (i64,) = sqlx::query_as("SELECT id FROM users WHERE provider_sub = $1")
         .bind(&claims.sub)
-        .fetch_one(&state.db)
+        .fetch_optional(&state.db)
         .await
-        .map_err(|_| AppError::Internal)?;
+        .map_err(|_| AppError::Internal)?
+        .ok_or_else(|| AppError::Unauthenticated("user not found".into()))?;
 
     // Step 1: check challenge state and expiry in one query
     let row: Option<(String, i64, i64, bool)> = sqlx::query_as(
@@ -89,7 +90,7 @@ pub async fn handler(
 
     let claimed: Option<(i64,)> = sqlx::query_as(
         "UPDATE challenges SET status = 'CLAIMED', resolved_at = now()
-         WHERE id = $1 AND status = 'PENDING'
+         WHERE id = $1 AND status = 'PENDING' AND expires_at > now()
          RETURNING reward",
     )
     .bind(body.challenge_id)
