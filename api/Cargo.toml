@@ -26,3 +26,4 @@ p256 = { version = "0.13", features = ["ecdsa", "pkcs8"] }
 ecdsa = { version = "0.16", features = ["pem"] }
 rand_core = { version = "0.6", features = ["std"] }
 sha2 = "0.10"
+tower = "0.5"
