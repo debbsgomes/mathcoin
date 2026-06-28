@@ -31,16 +31,25 @@ impl RateLimiter {
         let cutoff = now.checked_sub(window).unwrap_or(now);
 
         let mut buckets = self.buckets.lock().await;
-        let timestamps = buckets.entry(key).or_default();
+        let timestamps = buckets.entry(key.clone()).or_default();
 
         // Evict old entries
         timestamps.retain(|t| *t >= cutoff);
 
-        if timestamps.len() >= self.max_requests as usize {
-            return false; // rate limited
+        let limited = timestamps.len() >= self.max_requests as usize;
+
+        if !limited {
+            timestamps.push(now);
         }
 
-        timestamps.push(now);
+        // Periodic cleanup: remove empty buckets to prevent unbounded memory
+        if timestamps.is_empty() {
+            buckets.remove(&key);
+        }
+
+        if limited {
+            return false;
+        }
         true
     }
 }

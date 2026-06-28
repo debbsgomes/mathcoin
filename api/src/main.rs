@@ -85,7 +85,9 @@ async fn main() {
             let now = retarget_state.clock.now();
             let rate = stats.rate(retarget_state.retarget_config.window, now);
             let new_diff = difficulty::difficulty_retarget(current, rate, &retarget_state.retarget_config);
-            retarget_state.difficulty.store(new_diff, std::sync::atomic::Ordering::Relaxed);
+            if new_diff != current {
+                retarget_state.difficulty.store(new_diff, std::sync::atomic::Ordering::Relaxed);
+            }
         }
     });
 

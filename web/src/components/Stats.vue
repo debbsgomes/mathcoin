@@ -27,7 +27,8 @@ async function fetchStats() {
 
 onMounted(() => {
   fetchStats()
-  timer = setInterval(fetchStats, 10_000)
+  const pollMs = parseInt(import.meta.env.VITE_STATS_POLL_MS || '10000', 10)
+  timer = setInterval(fetchStats, pollMs)
 })
 
 onUnmounted(() => {
