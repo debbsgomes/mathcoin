@@ -1,5 +1,20 @@
 use rand::Rng;
 
+// SAFETY: All checked_arithmetic unwraps in this module are safe because operand
+// ranges are bounded to prevent overflow for every level:
+//   L1-L2: a,b ∈ [1,99], ± never overflows i64 (max 99+99=198, min 1-99=-98).
+//   L3: a ∈ [10,99], b ∈ [2,9], max product 99×9=891.
+//   L4: a ∈ [10,199], b ∈ [2,19], c ∈ [10,999], max product 199×19=3781.
+//        ± with c: max 3781+999=4780, min when swapped for subtraction.
+//   L5: a ∈ [10,99], b ∈ [2,19], c,d ∈ [10,99]×[2,19],
+//        max product 99×19=1881, sum/sub within i64.
+//        mod: divisor p ∈ [11,97], product 1881 fits, result < p.
+//   L6+: scale = 10^(level-4), a ∈ [10, 99|scale×2], b ∈ [2, 19|scale/4].
+//        For level 12: scale = 10^8 = 100_000_000.
+//        max_a = max(99, 200_000_000), max_b = max(19, 25_000_000).
+//        max product = 200_000_000 × 25_000_000 = 5e15 < i64::MAX (9.22e18).
+//        Subtraction with swapped big/small keeps result non-negative.
+
 /// Reward per difficulty level from the spec.
 pub fn reward_for_level(level: u32) -> i64 {
     match level {
@@ -78,6 +93,7 @@ fn gen_level4(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
         let solution = prod.checked_add(c).unwrap();
         (format!("{a} × {b} + {c}"), solution, reward)
     } else if prod >= c {
+        // SAFETY: guard ensures prod >= c
         let solution = prod.checked_sub(c).unwrap();
         (format!("{a} × {b} − {c}"), solution, reward)
     } else {
@@ -113,6 +129,7 @@ fn gen_level5_mixed(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let left = a.checked_mul(b).unwrap();
     let right = c.checked_mul(d).unwrap();
     if left >= right {
+        // SAFETY: guard ensures left >= right
         let solution = left.checked_sub(right).unwrap();
         (format!("{a} × {b} − {c} × {d}"), solution, reward)
     } else {
@@ -134,6 +151,7 @@ fn gen_level6plus(level: u32, rng: &mut impl Rng, reward: i64) -> (String, i64, 
     let left = a.checked_mul(b).unwrap();
     let right = c.checked_mul(d).unwrap();
     if left >= right {
+        // SAFETY: guard ensures left >= right
         let solution = left.checked_sub(right).unwrap();
         (format!("({a} × {b}) − ({c} × {d})"), solution, reward)
     } else {
