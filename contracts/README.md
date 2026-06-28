@@ -1,66 +1,38 @@
-## Foundry
+# MathCoin — Smart Contract
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+ERC-20 token with cumulative Merkle distributor, deployed on **Base Sepolia testnet**.
 
-Foundry consists of:
+**Contract:** `src/MathCoin.sol`  
+**Libraries:** OpenZeppelin ERC20, Ownable2Step, MerkleProof  
+**Framework:** Foundry
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Build & Test
 
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```bash
+forge build
+forge test       # 11 tests (9 unit + 2 fuzz)
 ```
 
-### Test
+## Deploy to Base Sepolia
 
-```shell
-$ forge test
+```bash
+# Set env vars
+export PRIVATE_KEY=<deployer-private-key>
+export BASESCAN_API_KEY=<optional-for-verification>
+
+# Deploy
+forge script script/Deploy.s.sol --rpc-url base_sepolia --broadcast --verify
 ```
 
-### Format
-
-```shell
-$ forge fmt
+After deploy, set the contract address in `api/.env`:
+```
+CONTRACT_ADDRESS=0x...
+CHAIN_NAME=base_sepolia
+CHAIN_ID=84532
+EXPLORER_URL=https://sepolia.basescan.org
 ```
 
-### Gas Snapshots
+## Testnet Only
 
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+This contract is intended for **Base Sepolia testnet only**.
+There is no mainnet deployment. The MATH token has no monetary value.
