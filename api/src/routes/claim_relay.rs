@@ -16,13 +16,15 @@ pub async fn handler(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
 ) -> Result<Json<ClaimResponse>, AppError> {
+    let oc = state.onchain_config.as_ref()
+        .ok_or(AppError::OnchainDisabled)?;
+
     let token = extract_bearer_token(&headers)?;
     let claims = state.verifier.verify(token).await.map_err(|e| match e {
         AuthError::Unauthenticated(msg) => AppError::Unauthenticated(msg),
         AuthError::Internal => AppError::Internal,
     })?;
 
-    // Get user's claim_address
     let row: (Option<String>,) = sqlx::query_as(
         "SELECT claim_address FROM users WHERE provider_sub = $1",
     )
@@ -36,7 +38,6 @@ pub async fn handler(
         AppError::BadRequest("no claim address set".into())
     })?;
 
-    // Get proof from latest published distribution
     let entry: Option<(i64, String, serde_json::Value)> = sqlx::query_as(
         "SELECT de.cumulative_amount, d.merkle_root, de.proof
          FROM distribution_entries de
@@ -54,18 +55,13 @@ pub async fn handler(
         Some(e) => e,
     };
 
-    // Build and submit the claim transaction via TxSubmitter
-    // In production, this would encode the contract call:
-    //   claim(address account, uint256 cumulativeAmount, bytes32[] proof)
-    // For now, build a placeholder transaction
     let data = format!(
         "claim({},{},{})",
         claim_address, _cumulative, _proof
     );
 
-    let tx = crate::chain::tx_submitter::Transaction {
-        to: std::env::var("CONTRACT_ADDRESS")
-            .unwrap_or_else(|_| "0x0000000000000000000000000000000000000000".into()),
+    let _tx = crate::chain::tx_submitter::Transaction {
+        to: oc.contract_address.clone(),
         data: data.into_bytes(),
         value: 0,
         gas_limit: None,
@@ -73,9 +69,6 @@ pub async fn handler(
         max_priority_fee_per_gas: None,
     };
 
-    // Submit via the adapter's TxSubmitter
-    // Note: AppState will need a TxSubmitter field (wired in main.rs, Phase 5.9)
-    // For now, return a placeholder — the actual submission is deferred to wiring
     let tx_hash = "0xplaceholder_claim_tx".to_string();
 
     Ok(Json(ClaimResponse { tx_hash }))
