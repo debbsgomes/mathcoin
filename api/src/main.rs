@@ -107,6 +107,7 @@ async fn main() {
         .route("/api/challenge", get(routes::challenge::handler))
         .route("/api/mint", post(routes::mint::handler))
         .route("/api/stats", get(routes::stats::handler))
+        .route("/api/audit", get(routes::audit::handler))
         .layer(middleware::from_fn_with_state(state.clone(), rate_limit::rate_limit_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())

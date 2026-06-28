@@ -155,3 +155,30 @@ describe('Stats', () => {
     expect(wrapper.text()).toContain('4200')
   })
 })
+
+// ---- Audit ----
+
+import Audit from '../../components/Audit.vue'
+
+describe('Audit', () => {
+  beforeEach(() => { vi.clearAllMocks() })
+
+  it('renders contract address and supply from API', async () => {
+    mockRequest.mockResolvedValueOnce({
+      contract_address: '0xAbc',
+      chain: 'base_sepolia',
+      explorer: 'https://sepolia.basescan.org',
+      merkle_root: '0xdead',
+      total_accrued_supply: 5000,
+      distribution_count: 3,
+      last_published_at: '2026-01-01T00:00:00Z',
+    })
+
+    const wrapper = mount(Audit)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('0xAbc')
+    expect(wrapper.text()).toContain('5000')
+    expect(wrapper.text()).toContain('0xdead')
+  })
+})

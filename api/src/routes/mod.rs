@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod challenge;
 pub mod claim_address;
 pub mod claim_data;
