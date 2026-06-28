@@ -1,6 +1,8 @@
 use axum::{routing::{get, post}, Router};
+use axum::http::StatusCode;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
@@ -55,6 +57,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/session", post(routes::session::handler))
         .route("/api/me", get(routes::me::handler))
+        .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);
 

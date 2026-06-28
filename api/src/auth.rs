@@ -97,6 +97,20 @@ pub struct JwksVerifier {
 
 impl JwksVerifier {
     pub fn new(jwks_url: String, issuer: String, audience: String) -> Self {
+        // In production, JWKS and issuer must use HTTPS.
+        // Localhost is exempt for testing/development.
+        if !jwks_url.contains("localhost") && !jwks_url.contains("127.0.0.1") {
+            assert!(
+                jwks_url.starts_with("https://"),
+                "JWKS_URL must use HTTPS in production"
+            );
+        }
+        if !issuer.contains("localhost") && !issuer.contains("127.0.0.1") {
+            assert!(
+                issuer.starts_with("https://"),
+                "JWT_ISS must use HTTPS in production"
+            );
+        }
         Self {
             jwks_url,
             issuer,
