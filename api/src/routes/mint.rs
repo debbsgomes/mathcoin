@@ -71,25 +71,35 @@ pub async fn handler(
     }
 
     if expired {
-        let _ = sqlx::query(
+        let affected = sqlx::query(
             "UPDATE challenges SET status = 'EXPIRED', resolved_at = now()
              WHERE id = $1 AND status = 'PENDING'",
         )
         .bind(body.challenge_id)
         .execute(&state.db)
-        .await;
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+        if affected == 0 {
+            return Err(AppError::AlreadyResolved);
+        }
         return Err(AppError::ChallengeExpired);
     }
 
     // Step 3: check answer
     if body.answer != solution {
-        let _ = sqlx::query(
+        let affected = sqlx::query(
             "UPDATE challenges SET status = 'EXPIRED', resolved_at = now()
              WHERE id = $1 AND status = 'PENDING'",
         )
         .bind(body.challenge_id)
         .execute(&state.db)
-        .await;
+        .await
+        .map(|r| r.rows_affected())
+        .unwrap_or(0);
+        if affected == 0 {
+            return Err(AppError::AlreadyResolved);
+        }
         return Err(AppError::IncorrectSolution);
     }
 

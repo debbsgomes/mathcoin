@@ -291,3 +291,222 @@ async fn hundred_racers_single_challenge_exactly_one_credit() {
         balance.0
     );
 }
+
+// ---- Correct-vs-wrong race: mixed answers on the SAME challenge ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn concurrent_correct_vs_wrong_at_most_one_credit() {
+    let pool = test_pool().await;
+
+    sqlx::query("DELETE FROM earnings").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM users").execute(&pool).await.unwrap();
+
+    let test_sub = "conc-cvsw";
+    let uid = seed_user(&pool, test_sub, "conc-cvsw@example.com").await;
+    let cid = seed_challenge(&pool, uid).await;
+
+    let concurrency = 50;
+
+    // Half correct (42), half wrong (999)
+    let mut entries = Vec::with_capacity(concurrency);
+    for i in 0..concurrency {
+        let answer = if i % 2 == 0 { 42i64 } else { 999i64 };
+        entries.push((cid, answer));
+    }
+
+    let results = concurrent_mint(&pool, test_sub, entries).await;
+
+    // INVARIANT: at most ONE earnings row (0 or 1, never >1)
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM earnings WHERE challenge_id = $1",
+    )
+    .bind(cid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        count.0 <= 1,
+        "at most 1 earnings row expected, got {}",
+        count.0
+    );
+
+    // INVARIANT: exactly ONE terminal state — either CLAIMED or EXPIRED, never PENDING
+    let status: (String,) =
+        sqlx::query_as("SELECT status FROM challenges WHERE id = $1")
+            .bind(cid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        status.0 == "CLAIMED" || status.0 == "EXPIRED",
+        "challenge must be in a terminal state (CLAIMED or EXPIRED), got {}",
+        status.0
+    );
+
+    // INVARIANT: zero or one credit, consistent with status
+    if status.0 == "CLAIMED" {
+        assert_eq!(count.0, 1, "CLAIMED must have exactly 1 credit");
+        let winners: Vec<_> = results.iter().filter(|r| r.status == 200).collect();
+        assert_eq!(winners.len(), 1, "CLAIMED requires exactly 1 winner (200)");
+    } else {
+        assert_eq!(count.0, 0, "EXPIRED must have 0 credits");
+        // Wrong-answer winners get 422, losers get 409
+        let non_409: Vec<_> = results.iter().filter(|r| r.status == 422).collect();
+        assert!(non_409.len() <= 1, "at most one 422 (the wrong-answer winner)");
+    }
+
+    // Ensure no unexpected statuses
+    for r in &results {
+        assert!(
+            r.status == 200 || r.status == 409 || r.status == 422,
+            "unexpected status {}: {:?}",
+            r.status,
+            r.body
+        );
+    }
+
+    // Balance must be 0 or 20, never anything else
+    let balance: (Option<i64>,) = sqlx::query_as(
+        "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let bal = balance.0.unwrap_or(0);
+    assert!(
+        bal == 0 || bal == 20,
+        "balance must be 0 or 20, got {bal}",
+    );
+}
+
+// ---- Replay race: already-CLAIMED challenge, concurrent mints → all 409 ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_replay_already_claimed_all_409() {
+    let pool = test_pool().await;
+
+    sqlx::query("DELETE FROM earnings").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM users").execute(&pool).await.unwrap();
+
+    let test_sub = "conc-replay";
+    let uid = seed_user(&pool, test_sub, "conc-replay@example.com").await;
+    let cid = seed_challenge(&pool, uid).await;
+
+    // Pre-claim the challenge (single-threaded)
+    let entries: Vec<_> = vec![(cid, 42i64)];
+    let results = concurrent_mint(&pool, test_sub, entries).await;
+    assert_eq!(results[0].status, 200, "pre-claim should succeed");
+    assert_eq!(results[0].body["status"], "CLAIMED");
+
+    let pre_balance: (Option<i64>,) = sqlx::query_as(
+        "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Now fire 50 concurrent replays
+    let concurrency = 50;
+    let entries: Vec<_> = (0..concurrency).map(|_| (cid, 42i64)).collect();
+    let results = concurrent_mint(&pool, test_sub, entries).await;
+
+    // ALL must be 409
+    for r in &results {
+        assert_eq!(
+            r.status, 409,
+            "replay must return 409, got {}: {:?}",
+            r.status, r.body
+        );
+    }
+
+    // NO additional earnings rows
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM earnings WHERE challenge_id = $1",
+    )
+    .bind(cid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count.0, 1, "should still have exactly 1 earnings row");
+
+    // Balance unchanged
+    let post_balance: (Option<i64>,) = sqlx::query_as(
+        "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        post_balance.0, pre_balance.0,
+        "balance must be unchanged after replays"
+    );
+}
+
+// ---- Expired challenge: concurrent mints → all 410/409, no credit ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_mint_vs_expired_no_credit() {
+    let pool = test_pool().await;
+
+    sqlx::query("DELETE FROM earnings").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM users").execute(&pool).await.unwrap();
+
+    let test_sub = "conc-expired";
+    let uid = seed_user(&pool, test_sub, "conc-expired@example.com").await;
+
+    // Seed an already-expired challenge
+    let cid = Uuid::new_v4();
+    sqlx::query(
+        "INSERT INTO challenges (id, user_id, problem, solution, difficulty, reward, status, expires_at)
+         VALUES ($1, $2, '1 + 1', 2, 1, 5, 'PENDING', now() - INTERVAL '1 minute')",
+    )
+    .bind(cid)
+    .bind(uid)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let concurrency = 30;
+    let entries: Vec<_> = (0..concurrency).map(|_| (cid, 2i64)).collect();
+    let results = concurrent_mint(&pool, test_sub, entries).await;
+
+    // All must be 410 or 409, never 200
+    for r in &results {
+        assert!(
+            r.status == 410 || r.status == 409,
+            "expired must return 410 or 409, got {}: {:?}",
+            r.status,
+            r.body
+        );
+    }
+
+    // At least one 410 (the first one marks it EXPIRED)
+    let expired_count = results.iter().filter(|r| r.status == 410).count();
+    assert!(expired_count >= 1, "at least one request should get 410");
+
+    // ZERO earnings rows
+    let count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM earnings WHERE challenge_id = $1",
+    )
+    .bind(cid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count.0, 0, "expired challenge must have 0 earnings rows");
+
+    // Balance unchanged
+    let balance: (Option<i64>,) = sqlx::query_as(
+        "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+    )
+    .bind(uid)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(balance.0.unwrap_or(0), 0, "balance must be 0 for expired challenge");
+}
