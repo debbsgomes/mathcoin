@@ -82,34 +82,42 @@ pub async fn handler(
         return Err(AppError::IncorrectSolution);
     }
 
-    // Step 4: mark CLAIMED and get reward (CAS — only one caller succeeds)
+    // Step 4-5: mark CLAIMED + credit earnings in a transaction.
+    // The transaction makes the CAS+INSERT intent explicit for readers,
+    // though ADR-0003 proves correctness without it (row lock + UNIQUE constraint).
+    let mut tx = state.db.begin().await.map_err(|_| AppError::Internal)?;
+
     let claimed: Option<(i64,)> = sqlx::query_as(
         "UPDATE challenges SET status = 'CLAIMED', resolved_at = now()
          WHERE id = $1 AND status = 'PENDING'
          RETURNING reward",
     )
     .bind(body.challenge_id)
-    .fetch_optional(&state.db)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|_| AppError::Internal)?;
 
     let reward = match claimed {
-        None => return Err(AppError::AlreadyResolved),
+        None => {
+            let _ = tx.rollback().await;
+            return Err(AppError::AlreadyResolved);
+        }
         Some((r,)) => r,
     };
 
-    // Step 5: credit earnings (UNIQUE constraint is defense-in-depth)
     sqlx::query(
         "INSERT INTO earnings (user_id, challenge_id, amount) VALUES ($1, $2, $3)",
     )
     .bind(user_id.0)
     .bind(body.challenge_id)
     .bind(reward)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(|_| AppError::Internal)?;
 
-    // Step 6: compute balance
+    tx.commit().await.map_err(|_| AppError::Internal)?;
+
+    // Step 6: compute balance (outside transaction — read-only)
     let balance: (Option<i64>,) = sqlx::query_as(
         "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
     )
