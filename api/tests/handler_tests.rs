@@ -5,6 +5,7 @@ use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::{AuthVerifier, MockVerifier};
 use mathcoin_api::difficulty::{FakeClock, MintingStats, RetargetConfig};
+use mathcoin_api::rate_limit::RateLimiter;
 use mathcoin_api::state::AppState;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -46,6 +47,7 @@ fn test_app(pool: &PgPool, verifier: Arc<dyn AuthVerifier>) -> axum::Router {
             diff_max: 12,
             max_step: 1,
         },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -525,6 +527,7 @@ fn test_app_with_clock(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, clock: Ar
             diff_max: 12,
             max_step: 1,
         },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
@@ -533,4 +536,84 @@ fn test_app_with_clock(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, clock: Ar
         .route("/api/mint", post(mathcoin_api::routes::mint::handler))
         .route("/api/stats", get(mathcoin_api::routes::stats::handler))
         .with_state(state)
+}
+
+// ---- Rate limiting ----
+
+fn test_app_with_rate(pool: &PgPool, verifier: Arc<dyn AuthVerifier>, max_requests: u64) -> axum::Router {
+    use axum::routing::{get, post};
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60),
+            target_rate: 20.0,
+            hysteresis_low: 15.0,
+            hysteresis_high: 25.0,
+            diff_min: 1,
+            diff_max: 12,
+            max_step: 1,
+        },
+        rate_limiter: Arc::new(RateLimiter::new(60, max_requests)),
+    });
+    axum::Router::new()
+        .route("/api/session", post(mathcoin_api::routes::session::handler))
+        .route("/api/me", get(mathcoin_api::routes::me::handler))
+        .route("/api/stats", get(mathcoin_api::routes::stats::handler))
+        .layer(axum::middleware::from_fn_with_state(state.clone(), mathcoin_api::rate_limit::rate_limit_middleware))
+        .with_state(state)
+}
+
+#[tokio::test]
+async fn rate_limit_under_limit_passes() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-rl-01".into(), "rl@example.com".into()));
+    let app = test_app_with_rate(&pool, verifier, 5);
+
+    for _ in 0..3 {
+        let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200, "under-limit request should pass");
+    }
+}
+
+#[tokio::test]
+async fn rate_limit_over_limit_returns_429() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-rl-02".into(), "rl2@example.com".into()));
+    let app = test_app_with_rate(&pool, verifier, 3);
+
+    for _ in 0..3 {
+        let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+    }
+
+    let r = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 429);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["error"], "rate_limited");
+}
+
+#[tokio::test]
+async fn rate_limit_per_sub_isolation() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier_a = Arc::new(MockVerifier::accepting("sub-a".into(), "a@example.com".into()));
+    let verifier_b = Arc::new(MockVerifier::accepting("sub-b".into(), "b@example.com".into()));
+    let app_a = test_app_with_rate(&pool, verifier_a, 2);
+    let app_b = test_app_with_rate(&pool, verifier_b.clone(), 2);
+
+    for _ in 0..2 {
+        let r = app_a.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tA")).body(Body::empty()).unwrap()).await.unwrap();
+        assert_eq!(r.status(), 200);
+    }
+    let r = app_a.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tA")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 429, "user A should be rate limited");
+
+    let r = app_b.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tB")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200, "user B should NOT be rate limited");
 }

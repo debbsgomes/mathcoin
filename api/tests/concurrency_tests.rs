@@ -8,6 +8,7 @@ use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::MockVerifier;
 use mathcoin_api::difficulty::{FakeClock, MintingStats, RetargetConfig};
+use mathcoin_api::rate_limit::RateLimiter;
 use mathcoin_api::state::AppState;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
@@ -51,6 +52,7 @@ fn test_app(pool: &PgPool, sub: &str) -> axum::Router {
             diff_max: 12,
             max_step: 1,
         },
+        rate_limiter: Arc::new(RateLimiter::new(60, 10000)),
     });
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))

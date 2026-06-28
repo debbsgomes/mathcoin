@@ -4,6 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::auth::AuthVerifier;
 use crate::difficulty::{Clock, MintingStats, RetargetConfig};
+use crate::rate_limit::RateLimiter;
 
 pub struct AppState {
     pub db: PgPool,
@@ -12,4 +13,5 @@ pub struct AppState {
     pub mint_stats: Arc<Mutex<MintingStats>>,
     pub clock: Arc<dyn Clock>,
     pub retarget_config: RetargetConfig,
+    pub rate_limiter: Arc<RateLimiter>,
 }

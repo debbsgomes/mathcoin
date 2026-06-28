@@ -12,12 +12,14 @@ mod challenge;
 mod db;
 mod difficulty;
 mod error;
+mod rate_limit;
 mod routes;
 mod state;
 
 use auth::JwksVerifier;
 use difficulty::{RealClock, RetargetConfig, MintingStats};
 use state::AppState;
+use rate_limit::RateLimiter;
 use std::sync::atomic::AtomicU32;
 use std::time::Duration;
 
@@ -62,6 +64,8 @@ async fn main() {
     let mint_stats = Arc::new(tokio::sync::Mutex::new(MintingStats::new()));
     let clock: Arc<dyn difficulty::Clock> = Arc::new(RealClock);
 
+    let rate_limiter = Arc::new(RateLimiter::new(60, 60)); // 60 req per 60s window
+
     let state = Arc::new(AppState {
         db: pool,
         verifier: Arc::new(verifier),
@@ -69,6 +73,7 @@ async fn main() {
         mint_stats: mint_stats.clone(),
         clock: clock.clone(),
         retarget_config: retarget_config.clone(),
+        rate_limiter: rate_limiter.clone(),
     });
 
     // Periodic retarget: every 5s, recompute difficulty from the sliding window
@@ -102,6 +107,7 @@ async fn main() {
         .route("/api/challenge", get(routes::challenge::handler))
         .route("/api/mint", post(routes::mint::handler))
         .route("/api/stats", get(routes::stats::handler))
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit::rate_limit_middleware))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
