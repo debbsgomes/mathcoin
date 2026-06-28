@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 
 mod auth;
 mod challenge;
+mod config;
 mod db;
 mod difficulty;
 mod error;
@@ -17,6 +18,7 @@ mod routes;
 mod state;
 
 use auth::JwksVerifier;
+use config::AppConfig;
 use difficulty::{RealClock, RetargetConfig, MintingStats};
 use state::AppState;
 use rate_limit::RateLimiter;
@@ -31,10 +33,9 @@ async fn main() {
 
     dotenvy::dotenv().ok();
 
-    let database_url =
-        std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let config = AppConfig::from_env();
 
-    let pool = db::create_pool(&database_url)
+    let pool = db::create_pool(&config.database_url)
         .await
         .expect("failed to create database pool");
 
@@ -44,11 +45,8 @@ async fn main() {
         .await
         .expect("failed to run migrations");
 
-    let jwks_url = std::env::var("JWKS_URL").expect("JWKS_URL must be set");
-    let jwt_iss = std::env::var("JWT_ISS").expect("JWT_ISS must be set");
-    let jwt_aud = std::env::var("JWT_AUD").expect("JWT_AUD must be set");
-
-    let verifier = JwksVerifier::new(jwks_url, jwt_iss, jwt_aud);
+    let jwks_url = config.jwks_url.expect("JWKS_URL required in JWKS mode");
+    let verifier = JwksVerifier::new(jwks_url, config.jwt_iss, config.jwt_aud);
 
     let retarget_config = RetargetConfig {
         window: Duration::from_secs(60),
@@ -91,8 +89,7 @@ async fn main() {
         }
     });
 
-    let frontend_origin = std::env::var("FRONTEND_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:5173".into());
+    let frontend_origin = config.frontend_origin;
 
     let cors = CorsLayer::new()
         .allow_origin(frontend_origin.parse::<axum::http::HeaderValue>()

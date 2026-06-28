@@ -45,6 +45,14 @@ pub async fn handler(
         }
     };
 
+    let span = tracing::info_span!(
+        "mint",
+        challenge_id = %body.challenge_id,
+        user_id = user_id.0,
+        answer = body.answer,
+    );
+    let _guard = span.enter();
+
     // Step 1: check challenge state and expiry in one query
     let row: Option<(String, i64, i64, bool)> = match sqlx::query_as(
         "SELECT status, solution, reward, expires_at <= now()
@@ -190,6 +198,12 @@ pub async fn handler(
             &state.retarget_config,
         );
         state.difficulty.store(new_diff, std::sync::atomic::Ordering::Relaxed);
+        tracing::info!(
+            reward = reward,
+            balance = balance.0.unwrap_or(0),
+            new_difficulty = new_diff,
+            "mint credited"
+        );
     }
 
     Ok(Json(MintResponse {
