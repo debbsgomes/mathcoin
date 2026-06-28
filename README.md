@@ -46,8 +46,13 @@ local URLs and keys. Copy the output values into your `.env` file.
 **2. Configure environment**
 
 ```bash
-cp .env.example .env
+cp .env.example .env               # root .env is the single source of truth
+cp api/.env.example api/.env        # mirror for running the API standalone
 ```
+
+The **root `.env.example`** is the single source of truth. `api/.env.example` is a
+subset mirror for when you run `cd api && cargo run` directly (the API binary loads
+`api/.env` from its working directory).
 
 Fill in `.env` with the values from `supabase status`:
 - `DATABASE_URL` ← DB URL from `supabase status`
@@ -161,17 +166,41 @@ The Rust adapter handles the on-chain `updateRoot` transaction.
 
 ---
 
-## Docker
+## Local Database Options
 
-A `docker-compose.yml` is provided for the API + Postgres:
+The project supports **two** ways to run Postgres locally.
+**Use ONE or the other — never both at once** (they conflict on port 5432).
+
+### Recommended: Supabase CLI (`supabase start`)
+
+This is the default path for clone-and-run. It provides **both Postgres and Auth**
+in one command — everything the app needs to function.
 
 ```bash
-cp .env.example .env    # edit DATABASE_URL and JWT vars
-docker compose up api
+supabase start        # boots Postgres + Auth + API in Docker
+supabase status       # prints URLs and keys → copy into .env
 ```
 
+This is what the Getting Started steps above assume.
+
+### Alternative: Standalone Postgres (docker-compose)
+
+For **CI pipelines**, or if you already use **Supabase cloud** (managed) and only
+need a local Postgres for development. This starts ONLY Postgres — you must
+point `DATABASE_URL` at it and configure `JWKS_URL`/`JWT_ISS` to Supabase cloud.
+
+```bash
+cp .env.example .env  # edit DATABASE_URL to point at the compose DB
+docker compose up api  # starts API + Postgres
+```
+
+> **Do not run both** `supabase start` and `docker compose up` at the same time —
+> they both bind port 5432 and will conflict.
+
 The Dockerfile uses `SQLX_OFFLINE=true` for builds without a live database.
-No `.sqlx` cache is needed (this project uses runtime-checked sqlx queries only).
+The `.sqlx/` directory is intentionally committed (currently empty — this project uses
+runtime-checked sqlx queries, not `query!` macros). If you adopt `query!` macros later,
+run `cargo sqlx prepare` to populate the cache so the offline Docker build keeps working.
 
 ---
 
@@ -214,8 +243,15 @@ On-chain vars (`CONTRACT_ADDRESS`, etc.) are optional — the core runs without 
 `CONTRACT_ADDRESS` is not set in `.env`. This is expected for local dev. Set it to enable.
 
 ### sqlx offline builds in Docker
-The Dockerfile sets `SQLX_OFFLINE=true`. This project uses runtime-checked sqlx queries
-(function variants, not `query!` macros), so no `.sqlx` cache is needed.
+The Dockerfile sets `SQLX_OFFLINE=true`. The `.sqlx/` cache directory is committed and
+intentionally kept (with a `.gitkeep`). It is currently empty because the project uses
+runtime-checked `sqlx::query`/`sqlx::query_as` function variants. If you adopt the
+`sqlx::query!` / `sqlx::query_as!` compile-time-checked macros, run `cargo sqlx prepare`
+to populate the cache so the Docker build keeps working.
+
+### Two Postgres instances (port conflict)
+If you see "port 5432 already in use", you have both `supabase start` and
+`docker compose up` running. Stop one: `supabase stop` or `docker compose down`.
 
 ### Google sign-in redirects to wrong URL
 In Supabase dashboard → Authentication → URL Configuration, set Site URL to your frontend URL

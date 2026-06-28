@@ -10,7 +10,7 @@ services:
     env_file:
       - .env
     environment:
-      - BIND_ADDRESS=0.0.0.0:3000
+      - BIND_ADDRESS=${BIND_ADDRESS:-0.0.0.0:3000}
     depends_on:
       db:
         condition: service_healthy

@@ -7,6 +7,10 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY migrations/ ./migrations/
+# .sqlx/ cache for offline builds (SQLX_OFFLINE).
+# Currently empty — the project uses sqlx::query / sqlx::query_as (runtime-checked).
+# If you adopt sqlx::query! / sqlx::query_as! (compile-time-checked macros),
+#   run `cargo sqlx prepare` to populate this directory.
 COPY .sqlx/ ./.sqlx/
 
 ENV SQLX_OFFLINE=true
