@@ -15,6 +15,7 @@
         <p>Logged in as {{ user.email }}</p>
         <Wallet ref="walletRef" />
         <Game @minted="onMinted" />
+        <Stats />
         <button @click="handleSignOut">Sign out</button>
       </div>
     </div>
@@ -30,6 +31,7 @@ import { useAuth } from '../composables/useAuth'
 import { useApi } from '../composables/useApi'
 import Game from './Game.vue'
 import Wallet from './Wallet.vue'
+import Stats from './Stats.vue'
 
 const { session, user, ready, signInWithPassword, signInWithGoogle, signOut } = useAuth()
 const api = useApi()
