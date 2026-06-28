@@ -1,1 +1,1 @@
-testClaimInvalidProofReverts
+testParityMultiNodeFixtureHasCorrectProofLength|testParityProofVerifies
