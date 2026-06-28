@@ -79,7 +79,10 @@ pub async fn handler(
         .execute(&state.db)
         .await
         .map(|r| r.rows_affected())
-        .unwrap_or(0);
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "expired UPDATE failed under contention");
+            0
+        });
         if affected == 0 {
             return Err(AppError::AlreadyResolved);
         }
@@ -96,7 +99,10 @@ pub async fn handler(
         .execute(&state.db)
         .await
         .map(|r| r.rows_affected())
-        .unwrap_or(0);
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "wrong-answer UPDATE failed under contention");
+            0
+        });
         if affected == 0 {
             return Err(AppError::AlreadyResolved);
         }
@@ -167,7 +173,10 @@ pub async fn handler(
     .bind(user_id.0)
     .fetch_one(&state.db)
     .await
-    .unwrap_or((Some(0),));
+    .unwrap_or_else(|e| {
+        tracing::error!(error = %e, "balance query failed after commit");
+        (Some(0),)
+    });
 
     Ok(Json(MintResponse {
         status: "CLAIMED".into(),

@@ -1,5 +1,9 @@
 /// Concurrency test harness for MathCoin mint endpoint.
 /// Proves the harness genuinely parallelizes before testing hot contention.
+///
+/// NOTE: Concurrency tests share a single test database. Run with `--test-threads=1`
+/// to avoid cross-test contamination:
+///   cargo test --test concurrency_tests -- --test-threads=1
 use axum::body::Body;
 use axum::http::{self, Request};
 use mathcoin_api::auth::MockVerifier;
