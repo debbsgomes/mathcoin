@@ -26,7 +26,7 @@ pub async fn handler(
     })?;
 
     // Upsert user — idempotent on provider_sub
-    let user_id: (i64,) = sqlx::query_as(
+    let row: (i64,) = sqlx::query_as(
         "INSERT INTO users (provider_sub, email) VALUES ($1, $2)
          ON CONFLICT (provider_sub) DO UPDATE SET email = EXCLUDED.email
          RETURNING id",
@@ -40,10 +40,22 @@ pub async fn handler(
         AppError::Internal
     })?;
 
+    // Query balance from earnings
+    let balance: (Option<i64>,) = sqlx::query_as(
+        "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+    )
+    .bind(row.0)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| {
+        tracing::error!("failed to query balance: {e}");
+        AppError::Internal
+    })?;
+
     Ok(Json(SessionResponse {
-        user_id: user_id.0,
+        user_id: row.0,
         email: claims.email,
-        balance: 0,
+        balance: balance.0.unwrap_or(0),
         claim_address: None,
     }))
 }

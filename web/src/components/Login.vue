@@ -13,7 +13,8 @@
       </div>
       <div v-else>
         <p>Logged in as {{ user.email }}</p>
-        <p>Balance: {{ balance }} MATH</p>
+        <Wallet ref="walletRef" />
+        <Game @minted="onMinted" />
         <button @click="handleSignOut">Sign out</button>
       </div>
     </div>
@@ -27,32 +28,29 @@
 import { ref, watch } from 'vue'
 import { useAuth } from '../composables/useAuth'
 import { useApi } from '../composables/useApi'
+import Game from './Game.vue'
+import Wallet from './Wallet.vue'
 
 const { session, user, ready, signInWithPassword, signInWithGoogle, signOut } = useAuth()
 const api = useApi()
 
 const email = ref('')
 const password = ref('')
-const balance = ref(0)
 const error = ref('')
+const walletRef = ref<InstanceType<typeof Wallet> | null>(null)
 
-// When session appears (login or restore), call POST /api/session then GET /api/me
-watch(session, async (newSession) => {
+watch(session, (newSession) => {
   if (newSession?.access_token) {
     api.setToken(newSession.access_token)
-    try {
-      await api.request('/api/session', { method: 'POST' })
-      const me = await api.request('/api/me')
-      balance.value = me.balance ?? 0
-      error.value = ''
-    } catch (e: any) {
-      error.value = e.message
-    }
+    error.value = ''
   } else {
     api.clearToken()
-    balance.value = 0
   }
 })
+
+function onMinted() {
+  walletRef.value?.refresh()
+}
 
 async function handleEmailSignIn() {
   try {

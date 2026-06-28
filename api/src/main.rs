@@ -8,6 +8,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 
 mod auth;
+mod challenge;
 mod db;
 mod error;
 mod routes;
@@ -61,6 +62,8 @@ async fn main() {
         .route("/api/health", get(health_check))
         .route("/api/session", post(routes::session::handler))
         .route("/api/me", get(routes::me::handler))
+        .route("/api/challenge", get(routes::challenge::handler))
+        .route("/api/mint", post(routes::mint::handler))
         .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
