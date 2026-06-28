@@ -1,5 +1,7 @@
 # MathCoin — Play-to-Earn Math Game
 
+🚧 Status: Active Development (Architecture & Infrastructure Proof of Concept)
+
 A full-stack play-to-earn math game with a real on-chain settlement layer deployed on
 **Base Sepolia testnet**. The MATH token is a deliberately valueless ERC-20 used to
 demonstrate the full architecture: off-chain gameplay → Merkle distribution → on-chain
