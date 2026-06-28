@@ -1,6 +1,6 @@
 /// Tests for Clock trait + difficulty_retarget pure function.
 /// Uses FakeClock for deterministic time control.
-use mathcoin_api::difficulty::{Clock, FakeClock, RealClock, difficulty_retarget, RetargetConfig};
+use mathcoin_api::difficulty::{Clock, FakeClock, RealClock, difficulty_retarget, RetargetConfig, MintingStats};
 use std::time::{Duration, Instant};
 
 fn default_config() -> RetargetConfig {
@@ -160,4 +160,99 @@ fn property_step_never_exceeds_max_step() {
             );
         }
     }
+}
+
+// ---- MintingStats ----
+
+#[test]
+fn minting_stats_records_and_counts_within_window() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    let window = Duration::from_secs(60);
+
+    for i in 0..10 {
+        stats.record(t + Duration::from_secs(i));
+    }
+
+    let rate = stats.rate(window, t + Duration::from_secs(59));
+    assert_eq!(rate as u32, 10, "all 10 mints within window should be counted");
+}
+
+#[test]
+fn minting_stats_evicts_old_entries() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    let window = Duration::from_secs(60);
+
+    for i in 0..5 {
+        stats.record(t + Duration::from_secs(i));
+    }
+    for i in 0..3 {
+        stats.record(t + Duration::from_secs(70 + i));
+    }
+
+    let rate = stats.rate(window, t + Duration::from_secs(72));
+    assert_eq!(rate as u32, 3, "only 3 mints should be in the window");
+}
+
+#[test]
+fn minting_stats_straddling_window_boundary() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    let window = Duration::from_secs(60);
+
+    for sec in [0, 5, 10, 30, 58, 59, 60, 61] {
+        stats.record(t + Duration::from_secs(sec));
+    }
+
+    let rate = stats.rate(window, t + Duration::from_secs(62));
+    assert_eq!(rate as u32, 7, "7 mints should be in window at t=62 (only t=0 evicted)");
+}
+
+#[test]
+fn minting_stats_empty_returns_zero() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    assert_eq!(stats.rate(Duration::from_secs(60), t) as u32, 0);
+}
+
+#[test]
+fn minting_stats_after_full_eviction_returns_zero() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    let window = Duration::from_secs(60);
+
+    for i in 0..5 {
+        stats.record(t + Duration::from_secs(i));
+    }
+
+    let rate = stats.rate(window, t + Duration::from_secs(300));
+    assert_eq!(rate as u32, 0, "all entries should be evicted");
+}
+
+#[test]
+fn minting_stats_rate_with_fake_clock() {
+    let mut stats = MintingStats::new();
+    let t = Instant::now();
+    let clock = FakeClock::new(t);
+    let window = Duration::from_secs(60);
+
+    for i in 0..8 {
+        stats.record(t + Duration::from_secs(i));
+        clock.advance(Duration::from_secs(1));
+    }
+
+    let rate = stats.rate(window, clock.now());
+    assert_eq!(rate as u32, 8);
+
+    clock.advance(Duration::from_secs(60));
+    let rate = stats.rate(window, clock.now());
+    assert_eq!(rate as u32, 0);
+
+    for _ in 0..3 {
+        stats.record(clock.now());
+        clock.advance(Duration::from_secs(1));
+    }
+    let rate = stats.rate(window, clock.now());
+    assert_eq!(rate as u32, 3);
 }
