@@ -40,14 +40,14 @@ pub async fn handler(
     )
     .fetch_one(&state.db)
     .await
-    .unwrap_or((Some(0),));
+    .map_err(|_| AppError::Internal)?;
 
     let dist_count: (i64,) = sqlx::query_as(
         "SELECT COUNT(*) FROM distributions WHERE status = 'published'",
     )
     .fetch_one(&state.db)
     .await
-    .unwrap_or((0,));
+    .map_err(|_| AppError::Internal)?;
 
     let (merkle_root, last_published_at) = match latest {
         Some((root, ts)) => (Some(root), Some(ts)),
