@@ -49,10 +49,12 @@ fn gen_level1(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let a: i64 = rng.gen_range(1..=9);
     let b: i64 = rng.gen_range(1..=9);
     if rng.gen_bool(0.5) {
+        // SAFETY: a,b ∈ [1,9], max sum 18 < i64::MAX
         let solution = a.checked_add(b).unwrap();
         (format!("{a} + {b}"), solution, reward)
     } else {
         let (big, small) = if a >= b { (a, b) } else { (b, a) };
+        // SAFETY: big >= small by construction
         let solution = big.checked_sub(small).unwrap();
         (format!("{big} − {small}"), solution, reward)
     }
@@ -64,10 +66,12 @@ fn gen_level2(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let a: i64 = rng.gen_range(10..=99);
     let b: i64 = rng.gen_range(10..=99);
     if rng.gen_bool(0.5) {
+        // SAFETY: a,b ∈ [10,99], max sum 198 < i64::MAX
         let solution = a.checked_add(b).unwrap();
         (format!("{a} + {b}"), solution, reward)
     } else {
         let (big, small) = if a >= b { (a, b) } else { (b, a) };
+        // SAFETY: big >= small by construction
         let solution = big.checked_sub(small).unwrap();
         (format!("{big} − {small}"), solution, reward)
     }
@@ -78,6 +82,7 @@ fn gen_level2(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
 fn gen_level3(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let a: i64 = rng.gen_range(10..=99);
     let b: i64 = rng.gen_range(2..=9);
+    // SAFETY: a ∈ [10,99], b ∈ [2,9], max product 99×9=891 < i64::MAX
     let solution = a.checked_mul(b).unwrap();
     (format!("{a} × {b}"), solution, reward)
 }
@@ -88,8 +93,10 @@ fn gen_level4(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let a: i64 = rng.gen_range(10..=199);
     let b: i64 = rng.gen_range(2..=19);
     let c: i64 = rng.gen_range(10..=999);
+    // SAFETY: a ∈ [10,199], b ∈ [2,19], max product 199×19=3781 < i64::MAX
     let prod = a.checked_mul(b).unwrap();
     if rng.gen_bool(0.5) {
+        // SAFETY: prod max 3781, c max 999, sum max 4780 < i64::MAX
         let solution = prod.checked_add(c).unwrap();
         (format!("{a} × {b} + {c}"), solution, reward)
     } else if prod >= c {
@@ -97,6 +104,7 @@ fn gen_level4(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
         let solution = prod.checked_sub(c).unwrap();
         (format!("{a} × {b} − {c}"), solution, reward)
     } else {
+        // SAFETY: else branch means prod < c, so c > prod
         let solution = c.checked_sub(prod).unwrap();
         (format!("{c} − {a} × {b}"), solution, reward)
     }
@@ -116,7 +124,9 @@ fn gen_level5_mod(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let a: i64 = rng.gen_range(10..=99);
     let b: i64 = rng.gen_range(2..=19);
     let p: i64 = rng.gen_range(11..=97);
+    // SAFETY: a ∈ [10,99], b ∈ [2,19], max product 1881 < i64::MAX
     let prod = a.checked_mul(b).unwrap();
+    // SAFETY: p ∈ [11,97], p > 0, result ∈ [0,96]
     let solution = prod.checked_rem(p).unwrap();
     (format!("({a} × {b}) mod {p}"), solution, reward)
 }
@@ -126,6 +136,7 @@ fn gen_level5_mixed(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
     let b: i64 = rng.gen_range(2..=19);
     let c: i64 = rng.gen_range(10..=99);
     let d: i64 = rng.gen_range(2..=19);
+    // SAFETY: a,c ∈ [10,99], b,d ∈ [2,19], max product 99×19=1881 < i64::MAX
     let left = a.checked_mul(b).unwrap();
     let right = c.checked_mul(d).unwrap();
     if left >= right {
@@ -133,6 +144,7 @@ fn gen_level5_mixed(rng: &mut impl Rng, reward: i64) -> (String, i64, i64) {
         let solution = left.checked_sub(right).unwrap();
         (format!("{a} × {b} − {c} × {d}"), solution, reward)
     } else {
+        // SAFETY: else branch means right > left
         let solution = right.checked_sub(left).unwrap();
         (format!("{c} × {d} − {a} × {b}"), solution, reward)
     }
@@ -148,6 +160,7 @@ fn gen_level6plus(level: u32, rng: &mut impl Rng, reward: i64) -> (String, i64, 
     let b: i64 = rng.gen_range(2..=max_b);
     let c: i64 = rng.gen_range(10..=max_a);
     let d: i64 = rng.gen_range(2..=max_b);
+    // SAFETY: product ≤ 5e15 for level 12, well within i64::MAX (9.22e18)
     let left = a.checked_mul(b).unwrap();
     let right = c.checked_mul(d).unwrap();
     if left >= right {
@@ -155,6 +168,7 @@ fn gen_level6plus(level: u32, rng: &mut impl Rng, reward: i64) -> (String, i64, 
         let solution = left.checked_sub(right).unwrap();
         (format!("({a} × {b}) − ({c} × {d})"), solution, reward)
     } else {
+        // SAFETY: else branch means right > left
         let solution = right.checked_sub(left).unwrap();
         (format!("({c} × {d}) − ({a} × {b})"), solution, reward)
     }
