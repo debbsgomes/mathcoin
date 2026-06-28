@@ -510,3 +510,250 @@ async fn concurrent_mint_vs_expired_no_credit() {
     .unwrap();
     assert_eq!(balance.0.unwrap_or(0), 0, "balance must be 0 for expired challenge");
 }
+
+// ---- Property test: balance = sum of correctly-credited rewards ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn property_no_double_credit_multiple_users() {
+    let pool = test_pool().await;
+
+    sqlx::query("DELETE FROM earnings").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM users").execute(&pool).await.unwrap();
+
+    let num_users = 10;
+    let challenges_per_user = 8;
+    let correct_batch = 5;
+    let wrong_batch = 3;
+
+    // Seed users
+    let mut user_ids = Vec::new();
+    for i in 0..num_users {
+        let sub = format!("prop-user-{i}");
+        let uid = seed_user(&pool, &sub, &format!("prop{i}@test.com")).await;
+        user_ids.push((uid, sub));
+    }
+
+    let mut challenge_map: std::collections::HashMap<Uuid, i64> = std::collections::HashMap::new();
+
+    // Fire per-user batches concurrently
+    for (uid, sub) in &user_ids {
+        let mut batch = Vec::new();
+        for _ in 0..challenges_per_user {
+            let cid = seed_challenge(&pool, *uid).await;
+            challenge_map.insert(cid, *uid);
+            for _ in 0..correct_batch {
+                batch.push((cid, 42i64));
+            }
+            for _ in 0..wrong_batch {
+                batch.push((cid, 999i64));
+            }
+        }
+        concurrent_mint(&pool, sub, batch).await;
+    }
+
+    // INVARIANT 1: per-challenge, at most 1 credit
+    for (cid, uid) in &challenge_map {
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM earnings WHERE challenge_id = $1",
+        )
+        .bind(cid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(count.0 <= 1, "challenge {cid} has {n} earnings rows", n = count.0);
+
+        let status: (String,) =
+            sqlx::query_as("SELECT status FROM challenges WHERE id = $1")
+                .bind(cid)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            status.0 == "CLAIMED" || status.0 == "EXPIRED",
+            "challenge {cid} in non-terminal state {s}", s = status.0
+        );
+    }
+
+    // INVARIANT 2: each user's balance = SUM of correctly-credited rewards
+    for (uid, _sub) in &user_ids {
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let actual = balance.0.unwrap_or(0);
+
+        // Expected: one reward per challenge that was CLAIMED
+        let expected: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(reward), 0)::BIGINT FROM challenges
+             WHERE user_id = $1 AND status = 'CLAIMED'",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            actual,
+            expected.0.unwrap_or(0),
+            "user {uid} balance mismatch: earnings={actual}, expected from CLAIMED challenges={}",
+            expected.0.unwrap_or(0)
+        );
+
+        // INVARIANT 3: balance never exceeds sum of all awarded rewards
+        let total_possible: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(reward), 0)::BIGINT FROM challenges WHERE user_id = $1",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            actual <= total_possible.0.unwrap_or(0),
+            "balance {actual} exceeds total possible {total}",
+            total = total_possible.0.unwrap_or(0)
+        );
+    }
+}
+
+// ---- Broad concurrent load: many users + challenges at once ----
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn broad_concurrent_load_no_cross_contamination() {
+    let pool = test_pool().await;
+
+    sqlx::query("DELETE FROM earnings").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(&pool).await.unwrap();
+    sqlx::query("DELETE FROM users").execute(&pool).await.unwrap();
+
+    let num_users = 8;
+    let challenges_per_user = 10;
+    let racers_per_challenge = 5; // modest concurrency per challenge
+
+    let mut user_data = Vec::new();
+    for i in 0..num_users {
+        let sub = format!("broad-user-{i}");
+        let uid = seed_user(&pool, &sub, &format!("broad{i}@test.com")).await;
+        user_data.push((uid, sub));
+    }
+
+    // Build all entries: for each user, challenges with mixed correct/wrong answers
+    let mut all_handles = Vec::new();
+
+    for (uid, sub) in &user_data {
+        let mut entries = Vec::new();
+        let mut expected_challenges: Vec<Uuid> = Vec::new();
+
+        for _ in 0..challenges_per_user {
+            let cid = seed_challenge(&pool, *uid).await;
+            expected_challenges.push(cid);
+            for _ in 0..racers_per_challenge {
+                // ~60% correct, ~40% wrong
+                let answer = if rand::random::<f64>() < 0.6 { 42i64 } else { 999i64 };
+                entries.push((cid, answer));
+            }
+        }
+
+        let pool = pool.clone();
+        let sub = sub.clone();
+        let uid = *uid;
+        let handle = tokio::spawn(async move {
+            let results = concurrent_mint(&pool, &sub, entries).await;
+            (uid, expected_challenges, results)
+        });
+        all_handles.push(handle);
+    }
+
+    // Collect all results
+    let mut all_per_user: Vec<(i64, Vec<Uuid>, Vec<MintResult>)> = Vec::new();
+    for h in all_handles {
+        all_per_user.push(h.await.unwrap());
+    }
+
+    // INVARIANT 1: per-challenge exactly-once holds for ALL challenges
+    for (uid, cids, _results) in &all_per_user {
+        for cid in cids {
+            let count: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM earnings WHERE challenge_id = $1",
+            )
+            .bind(cid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(
+                count.0 <= 1,
+                "user {uid} challenge {cid}: at most 1 earnings row, got {}",
+                count.0
+            );
+
+            let status: (String,) =
+                sqlx::query_as("SELECT status FROM challenges WHERE id = $1")
+                    .bind(cid)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert!(
+                status.0 == "CLAIMED" || status.0 == "EXPIRED",
+                "challenge {cid} terminal state violation: {s}",
+                s = status.0
+            );
+        }
+    }
+
+    // INVARIANT 2: no cross-user leakage — each user's balance = their own CLAIMED rewards
+    for (uid, cids, _results) in &all_per_user {
+        let balance: (Option<i64>,) = sqlx::query_as(
+            "SELECT SUM(amount)::BIGINT FROM earnings WHERE user_id = $1",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let actual = balance.0.unwrap_or(0);
+
+        let expected: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(reward), 0)::BIGINT FROM challenges
+             WHERE user_id = $1 AND status = 'CLAIMED'",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            actual,
+            expected.0.unwrap_or(0),
+            "user {uid}: balance {actual} != expected {exp} from CLAIMED challenges",
+            exp = expected.0.unwrap_or(0)
+        );
+
+        // INVARIANT 3: balance never exceeds total possible for this user
+        let total_possible: (Option<i64>,) = sqlx::query_as(
+            "SELECT COALESCE(SUM(reward), 0)::BIGINT FROM challenges WHERE user_id = $1",
+        )
+        .bind(uid)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert!(
+            actual <= total_possible.0.unwrap_or(0),
+            "user {uid}: balance {actual} > total possible {}",
+            total_possible.0.unwrap_or(0)
+        );
+    }
+
+    // INVARIANT 4: no earnings rows reference non-existent users (FK guarantees this at DB level)
+    let orphan_count: (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM earnings e LEFT JOIN users u ON u.id = e.user_id WHERE u.id IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(orphan_count.0, 0, "found orphan earnings rows");
+}
+
