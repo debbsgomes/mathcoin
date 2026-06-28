@@ -26,9 +26,14 @@ pub async fn handler(
         crate::auth::AuthError::Internal => AppError::Internal,
     })?;
 
-    // Look up user by provider_sub
-    let row: (i64, String) = sqlx::query_as(
-        "SELECT id, email FROM users WHERE provider_sub = $1",
+    let row: (i64, String, Option<i64>, Option<i64>) = sqlx::query_as(
+        "SELECT u.id, u.email,
+                COALESCE(SUM(e.amount), 0)::BIGINT,
+                COUNT(e.id)::BIGINT
+         FROM users u
+         LEFT JOIN earnings e ON e.user_id = u.id
+         WHERE u.provider_sub = $1
+         GROUP BY u.id, u.email",
     )
     .bind(&claims.sub)
     .fetch_optional(&state.db)
@@ -42,9 +47,9 @@ pub async fn handler(
     Ok(Json(MeResponse {
         user_id: row.0,
         email: row.1,
-        balance: 0,
+        balance: row.2.unwrap_or(0),
         claim_address: None,
-        total_mined: 0,
+        total_mined: row.3.unwrap_or(0),
         current_difficulty: 1,
     }))
 }
