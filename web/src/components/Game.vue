@@ -77,10 +77,12 @@ async function handleMint() {
       result.value = 'wrong'
       resultMessage.value = 'Wrong answer!'
       resultClass.value = 'fail'
+      error.value = ''
     } else if (msg.includes('expired')) {
       result.value = 'expired'
       resultMessage.value = 'Challenge expired!'
       resultClass.value = 'fail'
+      error.value = ''
     } else {
       error.value = msg
     }

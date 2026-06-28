@@ -66,7 +66,7 @@ describe('Game', () => {
     await flushPromises()
 
     await wrapper.find('input').setValue('10')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(mockRequest).toHaveBeenCalledWith('/api/mint', expect.objectContaining({
@@ -90,7 +90,7 @@ describe('Game', () => {
     await flushPromises()
 
     await wrapper.find('input').setValue('99')
-    await wrapper.find('form').trigger('submit.prevent')
+    await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(wrapper.text()).toContain('Wrong')
