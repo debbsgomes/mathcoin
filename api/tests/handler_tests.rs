@@ -617,3 +617,88 @@ async fn rate_limit_per_sub_isolation() {
     let r = app_b.oneshot(Request::builder().method(http::Method::GET).uri("/api/stats").header("Authorization", bearer("tB")).body(Body::empty()).unwrap()).await.unwrap();
     assert_eq!(r.status(), 200, "user B should NOT be rate limited");
 }
+
+// ---- POST /api/claim-address ----
+
+fn test_app_with_claim_sub(pool: &PgPool, sub: &str) -> axum::Router {
+    use axum::routing::post;
+    let verifier = Arc::new(MockVerifier::accepting(sub.into(), format!("{sub}@example.com")));
+    let state = Arc::new(AppState {
+        db: pool.clone(),
+        verifier,
+        difficulty: Arc::new(AtomicU32::new(3)),
+        mint_stats: Arc::new(tokio::sync::Mutex::new(MintingStats::new())),
+        clock: Arc::new(FakeClock::new(Instant::now())),
+        retarget_config: RetargetConfig {
+            window: Duration::from_secs(60), target_rate: 20.0,
+            hysteresis_low: 15.0, hysteresis_high: 25.0,
+            diff_min: 1, diff_max: 12, max_step: 1,
+        },
+        rate_limiter: Arc::new(RateLimiter::new(60, 1000)),
+    });
+    axum::Router::new()
+        .route("/api/session", post(mathcoin_api::routes::session::handler))
+        .route("/api/claim-address", post(mathcoin_api::routes::claim_address::handler))
+        .with_state(state)
+}
+
+fn test_app_with_claim(pool: &PgPool) -> axum::Router {
+    test_app_with_claim_sub(pool, "sub-claim")
+}
+
+#[tokio::test]
+async fn claim_address_valid_eip55_persists() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let app = test_app_with_claim(&pool);
+    create_user(&app).await;
+
+    // Valid EIP-55 checksummed address
+    let r = app.oneshot(Request::builder().method(http::Method::POST).uri("/api/claim-address")
+        .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
+        .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"}"#)).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+
+    let addr: (Option<String>,) = sqlx::query_as("SELECT claim_address FROM users WHERE provider_sub = 'sub-claim'")
+        .fetch_one(&pool).await.unwrap();
+    assert!(addr.0.is_some());
+}
+
+#[tokio::test]
+async fn claim_address_invalid_checksum_returns_400() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let app = test_app_with_claim(&pool);
+    create_user(&app).await;
+
+    // Invalid checksum (mixed case wrong)
+    let r = app.oneshot(Request::builder().method(http::Method::POST).uri("/api/claim-address")
+        .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
+        .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9c"}"#)).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 400);
+
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["error"], "invalid_request");
+}
+
+#[tokio::test]
+async fn claim_address_duplicate_rejected() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+
+    // First user sets the address
+    let app1 = test_app_with_claim(&pool);
+    create_user(&app1).await;
+    let r = app1.oneshot(Request::builder().method(http::Method::POST).uri("/api/claim-address")
+        .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
+        .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"}"#)).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+
+    // Second user with same address should fail
+    let app2 = test_app_with_claim_sub(&pool, "sub-claim-2");
+    let _uid2 = create_user(&app2).await;
+    let r = app2.oneshot(Request::builder().method(http::Method::POST).uri("/api/claim-address")
+        .header("Authorization", bearer("t1")).header("Content-Type", "application/json")
+        .body(Body::from(r#"{"address":"0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B"}"#)).unwrap()).await.unwrap();
+    assert!(r.status().as_u16() >= 400, "duplicate claim_address should fail");
+}
