@@ -184,6 +184,117 @@ async fn me_missing_auth_returns_401() {
     assert_eq!(response.status(), 401);
 }
 
+#[tokio::test]
+async fn me_balance_zero_with_no_earnings() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-me-bal0".into(), "bal0@example.com".into()));
+    let app = test_app(&pool, verifier);
+    create_user(&app).await;
+    let response = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/me").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["balance"], 0);
+    assert_eq!(body["total_mined"], 0);
+}
+
+#[tokio::test]
+async fn me_balance_reflects_earnings_sum() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-me-bal1".into(), "bal1@example.com".into()));
+    let app = test_app(&pool, verifier.clone());
+    let uid = create_user(&app).await;
+    let c1 = create_test_challenge(&pool, uid).await;
+    let c2 = create_test_challenge(&pool, uid).await;
+    sqlx::query("INSERT INTO earnings (user_id, challenge_id, amount) VALUES ($1, $2, 20)")
+        .bind(uid).bind(c1).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO earnings (user_id, challenge_id, amount) VALUES ($1, $2, 30)")
+        .bind(uid).bind(c2).execute(&pool).await.unwrap();
+    let response = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/me").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body["balance"], 50);
+    assert_eq!(body["total_mined"], 2);
+}
+
+#[tokio::test]
+async fn me_e2e_challenge_mint_balance_roundtrip() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting("sub-me-e2e".into(), "e2e@example.com".into()));
+    let app = test_app(&pool, verifier.clone());
+    create_user(&app).await;
+
+    let r = app.clone().oneshot(Request::builder().method(http::Method::GET).uri("/api/challenge").header("Authorization", bearer("t1")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let ch: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    let cid = ch["challenge_id"].as_str().unwrap();
+    let problem = ch["problem"].as_str().unwrap();
+    let answer = evaluate_problem(problem);
+
+    let r = app.clone().oneshot(Request::builder().method(http::Method::POST).uri("/api/mint").header("Authorization", bearer("t2")).header("Content-Type", "application/json").body(Body::from(format!(r#"{{"challenge_id":"{cid}","answer":{answer}}}"#))).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+
+    let r = app.oneshot(Request::builder().method(http::Method::GET).uri("/api/me").header("Authorization", bearer("t3")).body(Body::empty()).unwrap()).await.unwrap();
+    assert_eq!(r.status(), 200);
+    let me: serde_json::Value = serde_json::from_slice(&axum::body::to_bytes(r.into_body(), 1024).await.unwrap()).unwrap();
+    assert!(me["balance"].as_i64().unwrap() > 0, "balance should be > 0 after mint, got {}", me["balance"]);
+    assert_eq!(me["total_mined"], 1);
+    assert!(me["claim_address"].is_null());
+}
+
+fn evaluate_problem(problem: &str) -> i64 {
+    let p = problem.trim();
+    if p.contains(" mod ") {
+        let parts: Vec<&str> = p.trim_matches(|c| c == '(' || c == ')').split(") mod ").collect();
+        let expr = parts[0].to_string();
+        let modulo: i64 = parts.get(1).unwrap_or(&"").parse().unwrap_or(1);
+        return evaluate_simple(&expr) % modulo;
+    }
+    let clean = p.replace('(', "").replace(')', "");
+    evaluate_simple(&clean)
+}
+
+fn evaluate_simple(expr: &str) -> i64 {
+    let tokens: Vec<&str> = expr.split_whitespace().collect();
+    if tokens.len() == 3 {
+        let a: i64 = tokens[0].parse().unwrap();
+        let b: i64 = tokens[2].parse().unwrap();
+        match tokens[1] {
+            "+" => a + b,
+            "−" | "-" => a - b,
+            "×" | "*" => a * b,
+            _ => 0,
+        }
+    } else if tokens.len() == 5 {
+        let a: i64 = tokens[0].parse().unwrap();
+        let b: i64 = tokens[2].parse().unwrap();
+        let c: i64 = tokens[4].parse().unwrap();
+        let left = match tokens[1] { "×" | "*" => a * b, _ => a };
+        match tokens[3] {
+            "×" | "*" => left * c,
+            "+" => left + c,
+            "−" | "-" => left - c,
+            _ => left,
+        }
+    } else if tokens.len() == 7 {
+        let a: i64 = tokens[0].parse().unwrap();
+        let b: i64 = tokens[2].parse().unwrap();
+        let c: i64 = tokens[4].parse().unwrap();
+        let d: i64 = tokens[6].parse().unwrap();
+        let left = match tokens[1] { "×" | "*" => a * b, _ => a };
+        let right = match tokens[5] { "×" | "*" => c * d, _ => c };
+        match tokens[3] {
+            "−" | "-" => left - right,
+            "+" => left + right,
+            _ => left,
+        }
+    } else {
+        0
+    }
+}
+
 // ---- GET /api/challenge ----
 
 #[tokio::test]
