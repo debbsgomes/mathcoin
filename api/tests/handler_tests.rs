@@ -21,6 +21,8 @@ async fn pool() -> PgPool {
 }
 
 async fn clean_db(pool: &PgPool) {
+    sqlx::query("DELETE FROM earnings").execute(pool).await.unwrap();
+    sqlx::query("DELETE FROM challenges").execute(pool).await.unwrap();
     sqlx::query("DELETE FROM users").execute(pool).await.unwrap();
 }
 
@@ -33,6 +35,7 @@ fn test_app(pool: &PgPool, verifier: Arc<dyn AuthVerifier>) -> axum::Router {
     axum::Router::new()
         .route("/api/session", post(mathcoin_api::routes::session::handler))
         .route("/api/me", get(mathcoin_api::routes::me::handler))
+        .route("/api/challenge", get(mathcoin_api::routes::challenge::handler))
         .with_state(state)
 }
 
@@ -259,6 +262,84 @@ async fn me_missing_auth_returns_401() {
             Request::builder()
                 .method(http::Method::GET)
                 .uri("/api/me")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 401);
+}
+
+// ---- GET /api/challenge ----
+
+#[tokio::test]
+async fn challenge_creates_pending_row_and_returns_public_fields() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::accepting(
+        "sub-ch-001".into(),
+        "ch@example.com".into(),
+    ));
+    let app = test_app(&pool, verifier.clone());
+    let s = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(http::Method::POST)
+                .uri("/api/session")
+                .header("Authorization", bearer("t1"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(s.status(), 200);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/challenge")
+                .header("Authorization", bearer("t2"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 200);
+    let body: serde_json::Value =
+        serde_json::from_slice(&axum::body::to_bytes(response.into_body(), 1024).await.unwrap())
+            .unwrap();
+
+    assert!(body["challenge_id"].is_string(), "challenge_id missing");
+    assert!(body["problem"].is_string(), "problem missing");
+    assert!(body["difficulty"].is_number(), "difficulty missing");
+    assert!(body["reward"].is_number(), "reward missing");
+    assert!(body["expires_at"].is_string(), "expires_at missing");
+    assert!(body.get("solution").is_none(), "solution leaked in response");
+
+    let count: (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM challenges WHERE status = 'PENDING'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count.0, 1, "should have exactly one PENDING challenge");
+}
+
+#[tokio::test]
+async fn challenge_unauth_returns_401() {
+    let pool = pool().await;
+    clean_db(&pool).await;
+    let verifier = Arc::new(MockVerifier::rejecting());
+    let app = test_app(&pool, verifier);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(http::Method::GET)
+                .uri("/api/challenge")
                 .body(Body::empty())
                 .unwrap(),
         )
