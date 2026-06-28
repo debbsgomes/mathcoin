@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest'
 import { buildMerkleTree } from '../src/buildMerkleTree'
 import { StandardMerkleTree } from '@openzeppelin/merkle-tree'
-import * as fs from 'fs'
-import * as path from 'path'
+import { keccak256, encodeAbiParameters, concat } from 'viem'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 
 describe('buildMerkleTree', () => {
   it('builds tree for single leaf', () => {
@@ -85,7 +86,6 @@ describe('Cross-stack parity (TS → Solidity)', () => {
     // Build leaf for the Solidity side to verify against
     // leaf = keccak256(bytes.concat(keccak256(abi.encode(address, uint256))))
     // We compute it here and put it in the fixture
-    const { keccak256, encodeAbiParameters, concat } = require('viem')
     const leaf = keccak256(
       concat([keccak256(encodeAbiParameters(
         [{ type: 'address' }, { type: 'uint256' }],
