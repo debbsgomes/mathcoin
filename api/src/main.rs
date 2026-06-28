@@ -1,5 +1,6 @@
 use axum::{routing::{get, post}, Router};
-use axum::http::StatusCode;
+use axum::middleware;
+use axum::response::Response;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -57,6 +58,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/session", post(routes::session::handler))
         .route("/api/me", get(routes::me::handler))
+        .layer(middleware::from_fn(security_headers))
         .layer(TraceLayer::new_for_http())
         .layer(cors)
         .with_state(state);
@@ -67,4 +69,29 @@ async fn main() {
 
     tracing::info!("mathcoin-api listening on http://127.0.0.1:3000");
     axum::serve(listener, app).await.unwrap();
+}
+
+async fn security_headers(
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::STRICT_TRANSPORT_SECURITY,
+        "max-age=63072000; includeSubDomains; preload".parse().unwrap(),
+    );
+    headers.insert(
+        axum::http::header::X_CONTENT_TYPE_OPTIONS,
+        "nosniff".parse().unwrap(),
+    );
+    headers.insert(
+        axum::http::header::X_FRAME_OPTIONS,
+        "DENY".parse().unwrap(),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_SECURITY_POLICY,
+        "default-src 'none'".parse().unwrap(),
+    );
+    response
 }

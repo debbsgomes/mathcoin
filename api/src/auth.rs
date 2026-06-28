@@ -176,13 +176,19 @@ impl JwksVerifier {
             .keys
             .iter()
             .find(|k| &k.kid == kid)
-            .ok_or_else(|| AuthError::Unauthenticated(format!("unknown kid: {kid}")))?;
+            .ok_or_else(|| {
+                tracing::warn!(kid = %kid, "unknown kid in token");
+                AuthError::Unauthenticated("unknown signing key".into())
+            })?;
 
         let der_key = build_p256_spki_der(&jwk.x, &jwk.y)?;
         let pem_key = der_to_pem(&der_key, "PUBLIC KEY");
 
         let decoding_key = DecodingKey::from_ec_pem(pem_key.as_bytes())
-            .map_err(|e| AuthError::Unauthenticated(format!("invalid public key: {e}")))?;
+            .map_err(|e| {
+                tracing::error!(error = %e, "invalid public key from JWKS");
+                AuthError::Unauthenticated("authentication service unavailable".into())
+            })?;
 
         let mut validation = Validation::new(jsonwebtoken::Algorithm::ES256);
         validation.set_issuer(&[&self.issuer]);
